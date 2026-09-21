@@ -1,0 +1,40 @@
+---
+import { getCollection } from "astro:content";
+import "./legacy-diorama.css";
+
+const articles = await getCollection("articles");
+const autoPostsLabel = `${articles.length} 篇`;
+---
+
+<section class="legacy-home-diorama" data-home-shell aria-label="交互式 3D 房间首页">
+  <canvas class="legacy-home-diorama__canvas" data-diorama-canvas aria-hidden="true"></canvas>
+
+  <div class="legacy-home-diorama__hud" aria-hidden="true">
+    <div class="legacy-diorama-hint" data-diorama-hint>
+      drag to orbit · scroll for seasons · click objects
+    </div>
+  </div>
+
+  <nav class="legacy-diorama-sr-nav" aria-label="画布快捷导航">
+    <a href="/articles">文章</a>
+    <a href="/exhibitions">展览</a>
+    <a href="/projects">项目</a>
+    <a href="/about">关于</a>
+    <a href="/books">读书</a>
+    <a href="/movies">观影</a>
+  </nav>
+
+  <div class="legacy-diorama-tooltip" data-diorama-tooltip aria-hidden="true"></div>
+</section>
+
+<script is:inline define:vars={{ autoPostsLabel }}>
+  window.__HOME_POSTS_LABEL = autoPostsLabel;
+  window.blogGoToRoute = (route) => {
+    const resolvedRoute = route === "/games" ? "/books" : route;
+    window.location.assign(resolvedRoute);
+  };
+</script>
+
+<script is:inline type="module">
+  import "/vendor/lsy22-diorama/HomeDiorama.astro_astro_type_script_index_0_lang.Dor3iEe3.js?v=20260827-legacy";
+</script>

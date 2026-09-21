@@ -1,0 +1,16 @@
+{
+  "extends": "astro/tsconfigs/strict",
+  "include": ["src/**/*", "scripts/new-post.mjs", "functions/**/*", "cloud-functions/**/*"],
+  "exclude": ["dist", "helloagents"],
+  "compilerOptions": {
+    "baseUrl": ".",
+    "types": ["node"],
+    "paths": {
+      "@/*": ["./src/*"]
+    },
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
+    "resolveJsonModule": true,
+    "esModuleInterop": true
+  }
+}

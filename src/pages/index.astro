@@ -1,0 +1,14 @@
+---
+import Layout from "@/components/layout/Layout.astro";
+import LegacyHomeDiorama from "@/components/home/LegacyHomeDiorama.astro";
+
+export const prerender = true;
+---
+
+<Layout
+  contentLayout="custom"
+  hideFooter={true}
+  headerMode="overlay"
+>
+  <LegacyHomeDiorama />
+</Layout>

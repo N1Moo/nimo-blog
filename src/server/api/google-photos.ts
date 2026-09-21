@@ -1,0 +1,161 @@
+import { GOOGLE_PHOTOS_MEDIA_HEADERS } from "../../lib/google-photos/shared.js";
+import { createServerRequestLog, summarizeUrl } from "../../lib/server/request-log.js";
+import { fetchAssetDirect } from "../../lib/server/asset-relay.js";
+
+const GOOGLE_PHOTOS_MEDIA_HOST = "lh3.googleusercontent.com";
+
+function isAllowedGooglePhotosMediaUrl(mediaUrl: string) {
+  try {
+    const parsedUrl = new URL(mediaUrl);
+    return parsedUrl.protocol === "https:" && parsedUrl.hostname === GOOGLE_PHOTOS_MEDIA_HOST;
+  } catch {
+    return false;
+  }
+}
+
+export const GET = async ({ request }: { request: Request }) => {
+  const url = new URL(request.url);
+  const mediaUrl = url.searchParams.get("mediaUrl");
+  const shareUrl = url.searchParams.get("shareUrl");
+  const cursor = url.searchParams.get("cursor");
+  const loadedCount = Number.parseInt(url.searchParams.get("loadedCount") || "0", 10);
+  const log = createServerRequestLog("api.google-photos", request, {
+    hasMediaUrl: Boolean(mediaUrl),
+    mediaUrl: summarizeUrl(mediaUrl),
+    shareUrl: summarizeUrl(shareUrl),
+    hasCursor: Boolean(cursor),
+    loadedCount,
+  });
+
+  if (mediaUrl) {
+    if (!isAllowedGooglePhotosMediaUrl(mediaUrl)) {
+      log.respond(400, { reason: "invalid_media_url" });
+      return new Response("Invalid Google Photos media URL", {
+        status: 400,
+        headers: {
+          "Cache-Control": "no-store, max-age=0",
+        },
+      });
+    }
+
+    try {
+      const forwardedRange = request.headers.get("range");
+      log.info("media.proxy.fetch.start", {
+        mediaUrl: summarizeUrl(mediaUrl),
+        hasRange: Boolean(forwardedRange),
+      });
+      const response = await fetchAssetDirect(mediaUrl, {
+        headers: {
+          ...GOOGLE_PHOTOS_MEDIA_HEADERS,
+          ...(forwardedRange ? { Range: forwardedRange } : {}),
+        },
+      });
+
+      if (!response.ok && response.status !== 206) {
+        log.warn("media.proxy.fetch.non_ok", {
+          mediaUrl: summarizeUrl(mediaUrl),
+          upstreamStatus: response.status,
+        });
+        return new Response("Failed to fetch Google Photos media", { status: response.status });
+      }
+
+      const responseHeaders = new Headers({
+        "Content-Type": response.headers.get("content-type") || "application/octet-stream",
+        "Cache-Control": "public, max-age=31536000, immutable",
+        "CDN-Cache-Control": "public, max-age=31536000, immutable",
+      });
+
+      const passthroughHeaderNames = [
+        "accept-ranges",
+        "content-length",
+        "content-range",
+        "etag",
+        "last-modified",
+      ];
+
+      for (const headerName of passthroughHeaderNames) {
+        const headerValue = response.headers.get(headerName);
+
+        if (headerValue) {
+          responseHeaders.set(headerName, headerValue);
+        }
+      }
+
+      log.respond(response.status, {
+        reason: "media_proxy_success",
+        mediaUrl: summarizeUrl(mediaUrl),
+        upstreamStatus: response.status,
+        hasRange: Boolean(forwardedRange),
+      });
+
+      return new Response(response.body, {
+        status: response.status,
+        headers: responseHeaders,
+      });
+    } catch (error) {
+      log.error("media.proxy.fetch.error", error, {
+        mediaUrl: summarizeUrl(mediaUrl),
+      });
+      log.respond(500, { reason: "media_proxy_failed" });
+      return new Response("Error fetching Google Photos media", { status: 500 });
+    }
+  }
+
+  if (!shareUrl) {
+    log.respond(400, { reason: "missing_share_url" });
+    return new Response(JSON.stringify({ error: "缺少 Google Photos 分享链接" }), {
+      status: 400,
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store, max-age=0",
+      },
+    });
+  }
+
+  try {
+    log.info("share.fetch.start", {
+      shareUrl: summarizeUrl(shareUrl),
+      hasCursor: Boolean(cursor),
+    });
+    const { fetchGooglePhotosPage } = await import("../../lib/google-photos/node.js");
+    const data = await fetchGooglePhotosPage({
+      shareUrl,
+      cursor,
+      loadedCount: Number.isNaN(loadedCount) ? 0 : loadedCount,
+    });
+
+    const itemsCount = data.photos.length;
+    log.respond(200, {
+      reason: "share_fetch_success",
+      items: itemsCount,
+      hasNextCursor: Boolean(data.nextCursor),
+    });
+
+    return new Response(JSON.stringify(data), {
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": cursor ? "public, s-maxage=3600" : "public, s-maxage=300",
+        "CDN-Cache-Control": cursor ? "public, max-age=3600" : "public, max-age=300",
+      },
+    });
+  } catch (error) {
+    log.error("share.fetch.error", error, {
+      shareUrl: summarizeUrl(shareUrl),
+      hasCursor: Boolean(cursor),
+    });
+    log.respond(500, { reason: "share_fetch_failed" });
+    return new Response(
+      JSON.stringify({
+        error: "获取相册数据失败",
+        message: error instanceof Error ? error.message : "未知错误",
+      }),
+      {
+        status: 500,
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store, max-age=0",
+        },
+      },
+    );
+  }
+};

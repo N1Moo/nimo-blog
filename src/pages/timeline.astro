@@ -1,0 +1,15 @@
+---
+import Layout from "@/components/layout/Layout.astro";
+import TimelineView from "@/components/article/TimelineView.astro";
+
+export const prerender = true;
+---
+
+<Layout
+  title="文章时间线"
+  pageType="directory"
+  description="按发布时间浏览文章"
+  skipSrTitle={false}
+>
+  <TimelineView />
+</Layout>

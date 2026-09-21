@@ -1,0 +1,19 @@
+---
+import Layout from "@/components/layout/Layout.astro";
+import WereadBookList from "@/components/WereadBookList";
+
+export const prerender = true;
+---
+
+<Layout
+  title={`书单`}
+  description={`我读过的书`}
+  pageType="directory"
+  skipSrTitle={false}
+>
+  <!-- 示例：将 listId 改成自己的微信读书书单 ID。 -->
+  <WereadBookList
+    listId="333895983_80fTRWHwy"
+    client:idle
+  />
+</Layout>

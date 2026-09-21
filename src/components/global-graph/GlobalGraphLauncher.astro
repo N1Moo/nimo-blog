@@ -1,0 +1,78 @@
+<div data-global-graph-root></div>
+
+<script>
+  const GLOBAL_GRAPH_LAUNCHER_KEY = "__globalGraphLauncherModule";
+  const GLOBAL_GRAPH_PRELOAD_KEY = "__globalGraphPreloadScheduled";
+  const GLOBAL_GRAPH_CLICK_BOUND_KEY = "__globalGraphLauncherClickBound";
+  type GlobalGraphLauncherModule = typeof import("@/components/global-graph/launcher");
+  interface GlobalGraphLauncherWindow extends Window {
+    __globalGraphLauncherModule?: Promise<GlobalGraphLauncherModule>;
+    __globalGraphPreloadScheduled?: boolean;
+    __globalGraphLauncherClickBound?: boolean;
+  }
+  const launcherWindow = window as GlobalGraphLauncherWindow;
+
+  function loadGlobalGraphLauncher() {
+    launcherWindow.__globalGraphLauncherModule ??= import("@/components/global-graph/launcher").catch((error) => {
+      delete launcherWindow.__globalGraphLauncherModule;
+      throw error;
+    });
+
+    return launcherWindow.__globalGraphLauncherModule;
+  }
+
+  async function openGlobalGraphFromLauncher() {
+    const { openGlobalGraph } = await loadGlobalGraphLauncher();
+    await openGlobalGraph();
+  }
+
+  async function preloadGlobalGraphFromLauncher() {
+    const { preloadGlobalGraph } = await loadGlobalGraphLauncher();
+    await preloadGlobalGraph();
+  }
+
+  function queueGlobalGraphPreload() {
+    const startPreload = () => {
+      void preloadGlobalGraphFromLauncher().catch((error) => {
+        console.error("全局图谱空闲预加载失败:", error);
+      });
+    };
+
+    if (typeof window.requestIdleCallback === "function") {
+      window.requestIdleCallback(startPreload, { timeout: 2500 });
+      return;
+    }
+
+    window.setTimeout(startPreload, 1);
+  }
+
+  function scheduleGlobalGraphPreload() {
+    if (launcherWindow.__globalGraphPreloadScheduled) return;
+    launcherWindow.__globalGraphPreloadScheduled = true;
+
+    if (document.readyState === "complete") {
+      queueGlobalGraphPreload();
+      return;
+    }
+
+    window.addEventListener("load", queueGlobalGraphPreload, { once: true });
+  }
+
+  function handleGlobalGraphLauncherClick(event: Event) {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+
+    const button = target.closest("[data-open-global-graph]");
+    if (!(button instanceof HTMLElement)) return;
+
+    event.preventDefault();
+    void openGlobalGraphFromLauncher();
+  }
+
+  if (!launcherWindow.__globalGraphLauncherClickBound) {
+    document.addEventListener("click", handleGlobalGraphLauncherClick);
+    launcherWindow.__globalGraphLauncherClickBound = true;
+  }
+
+  scheduleGlobalGraphPreload();
+</script>

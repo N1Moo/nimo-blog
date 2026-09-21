@@ -1,0 +1,68 @@
+---
+interface Props {
+  height?: number;
+  width?: number;
+  fill?: string;
+  className?: string;
+  // 过渡动画模式配置
+  transitionMode?: "expand" | "shrink" | "auto" | "reverse-auto";
+  // 自定义主题切换动画时间
+  transitionDuration?: number;
+}
+
+const {
+  height = 16,
+  width = 16,
+  fill = "currentColor",
+  className = "",
+  transitionMode = "auto", // 默认为自动模式
+  transitionDuration = 700, // 默认动画时间(毫秒)
+} = Astro.props;
+
+// 导入外部CSS样式文件
+import "./theme-toggle.css";
+---
+
+<button
+  id="theme-toggle-button"
+  class={`inline-flex items-center justify-center h-8 w-8 cursor-pointer rounded-md hover:bg-gray-100 dark:hover:bg-gray-700/50 text-secondary-600 dark:text-secondary-400 hover:text-primary-600 dark:hover:text-primary-400 ${className}`}
+  aria-label="切换主题"
+  role="button"
+  tabindex="0"
+  data-transition-mode={transitionMode}
+  data-transition-duration={transitionDuration}
+  data-theme-transitioning="false"
+  style={`--theme-toggle-icon-width: ${width}px; --theme-toggle-icon-height: ${height}px;`}
+>
+  <!-- 月亮图标 (暗色模式) -->
+  <svg
+    id="dark-icon"
+    fill={fill}
+    viewBox="0 0 16 16"
+    class="theme-toggle-icon hidden dark:block relative z-10"
+    aria-hidden="true"
+  >
+    <path
+      d="M6 .278a.768.768 0 0 1 .08.858 7.208 7.208 0 0 0-.878 3.46c0 4.021 3.278 7.277 7.318 7.277.527 0 1.04-.055 1.533-.16a.787.787 0 0 1 .81.316.733.733 0 0 1-.031.893A8.349 8.349 0 0 1 8.344 16C3.734 16 0 12.286 0 7.71 0 4.266 2.114 1.312 5.124.06A.752.752 0 0 1 6 .278z"
+    ></path>
+  </svg>
+
+  <!-- 太阳图标 (亮色模式) -->
+  <svg
+    id="light-icon"
+    fill={fill}
+    viewBox="0 0 16 16"
+    class="theme-toggle-icon block dark:hidden relative z-10"
+    aria-hidden="true"
+  >
+    <path
+      d="M8 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM8 0a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-1 0v-2A.5.5 0 0 1 8 0zm0 13a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-1 0v-2A.5.5 0 0 1 8 13zm8-5a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1 0-1h2a.5.5 0 0 1 .5.5zM3 8a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1 0-1h2A.5.5 0 0 1 3 8zm10.657-5.657a.5.5 0 0 1 0 .707l-1.414 1.415a.5.5 0 1 1-.707-.708l1.414-1.414a.5.5 0 0 1 .707 0zm-9.193 9.193a.5.5 0 0 1 0 .707L3.05 13.657a.5.5 0 0 1-.707-.707l1.414-1.414a.5.5 0 0 1 .707 0zm9.193 2.121a.5.5 0 0 1-.707 0l-1.414-1.414a.5.5 0 0 1 .707-.707l1.414 1.414a.5.5 0 0 1 0 .707zM4.464 4.465a.5.5 0 0 1-.707 0L2.343 3.05a.5.5 0 1 1 .707-.707l1.414 1.414a.5.5 0 0 1 0 .708z"
+    ></path>
+  </svg>
+
+  <!-- 波纹效果容器 -->
+  <span
+    id="ripple-container"
+    class="absolute inset-0 pointer-events-none z-0"
+  ></span>
+</button>

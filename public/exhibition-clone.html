@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en" style="background-color: #141414">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=5" />
+    <meta name="format-detection" content="telephone=no" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>NIMO - Independent developer</title>
+    <style>
+      @font-face {
+        font-family: "TNY";
+        src: url("/static/font/t.woff2") format("woff2");
+        font-weight: 400;
+        font-style: normal;
+        font-display: swap;
+      }
+
+      @font-face {
+        font-family: "jws";
+        src: url("/static/font/jw.woff2") format("woff2");
+        font-weight: 700;
+        font-style: normal;
+        font-display: swap;
+      }
+
+      html {
+        -webkit-text-size-adjust: none;
+        -webkit-font-smoothing: antialiased;
+        cursor: default;
+        -webkit-tap-highlight-color: transparent;
+      }
+
+      a,
+      body,
+      div,
+      footer,
+      h1,
+      h2,
+      header,
+      html,
+      img,
+      li,
+      nav,
+      p,
+      span,
+      ul {
+        margin: 0;
+        padding: 0;
+        border: 0;
+        font: inherit;
+        font-size: 100%;
+      }
+
+      li,
+      ul {
+        list-style: none;
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      a,
+      img,
+      picture,
+      svg,
+      video {
+        display: block;
+      }
+
+      img,
+      svg,
+      video {
+        width: 100%;
+        height: auto;
+      }
+
+      svg {
+        height: 100%;
+      }
+
+      body {
+        font-family: "jws";
+        font-feature-settings: "liga" off;
+      }
+
+      #load {
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      .iss,
+      .iss-w {
+        left: 0;
+        width: 100%;
+      }
+
+      .iss-w {
+        z-index: 9999;
+        position: fixed;
+        top: 0;
+        height: 100%;
+        text-align: center;
+        background: #fff;
+        color: #000;
+        font-family: Arial, sans-serif;
+        font-size: 16px;
+        line-height: 18px;
+      }
+
+      .iss {
+        position: absolute;
+        top: calc(50% - 9px);
+        box-sizing: border-box;
+        padding: 0 30px;
+      }
+    </style>
+    <script>
+      window._A = {
+        config: { v: 2, isLocal: false },
+        color: {
+          bg: { hex: "#141414", rgbNorm: [0.07843, 0.07843, 0.07843] },
+          txt: { hex: "#bac4b8", rgb255: [186, 196, 184] }
+        },
+        webp: true,
+        is: { 404: false, work: false, home: true, about: false },
+        was: { 404: false, work: false, home: false, about: false },
+        route: { new: { url: "/", page: "home" }, old: { url: false, page: false } }
+      };
+
+      const requestedDevice = new URLSearchParams(location.search).get("device");
+      const detectedDevice = /Mobi|Andrdoid|Tablet|iPad|iPhone/.test(navigator.userAgent) ||
+        (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)
+        ? "m"
+        : "d";
+      const device = requestedDevice === "m" || requestedDevice === "d" ? requestedDevice : detectedDevice;
+      const exhibitionLimit = 12;
+      const nativeFetch = window.fetch.bind(window);
+      window.fetch = async (input, init) => {
+        const url = typeof input === "string" ? input : input.url;
+        if (!url.includes("xhr=true")) return nativeFetch(input, init);
+
+        const snapshot = device === "m" ? "home-xhr-m.json" : "home-xhr.json";
+        const response = await nativeFetch(`/reference-aristide/${snapshot}?v=20260818-exhibit9`, {
+          cache: "no-store"
+        });
+        const payload = await response.json();
+        payload.data.work = payload.data.work.slice(0, exhibitionLimit);
+        payload.data.workL = payload.data.work.length;
+        payload.data.work.forEach((work) => {
+          work.visit = false;
+        });
+        payload.app = payload.app
+          .replaceAll("aristide.benoist@gmail.com", "zhfnimo@gmail.com")
+          .replaceAll("ARISTIDE BENOIST", "NIMO")
+          .replaceAll("ARISTIDE", "NIMO")
+          .replace(
+            /<a id="n0" href="\/">[\s\S]*?<\/a>/,
+            '<a id="n0" href="/"><span><span>N</span></span> <span><span>I</span></span> <span><span>M</span></span> <span><span>O</span></span></a>'
+          );
+        const template = document.createElement("template");
+        template.innerHTML = payload.app;
+        template.content.querySelectorAll("#li > li").forEach((item, index) => {
+          if (index >= exhibitionLimit) item.remove();
+        });
+        template.content.querySelectorAll(".pgn-b > div").forEach((total) => {
+          total.textContent = String(exhibitionLimit).padStart(2, "0");
+        });
+        template.content.querySelectorAll('a[href^="http://"], a[href^="https://"]').forEach((anchor) => {
+          anchor.setAttribute("href", "#");
+          anchor.setAttribute("data-external-disabled", "true");
+          anchor.removeAttribute("target");
+          anchor.removeAttribute("rel");
+        });
+        payload.app = template.innerHTML;
+        return new Response(JSON.stringify(payload), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        });
+      };
+
+      document.addEventListener(
+        "click",
+        (event) => {
+          const anchor = event.target instanceof Element
+            ? event.target.closest('a[data-external-disabled="true"]')
+            : null;
+          if (!anchor) return;
+          event.preventDefault();
+          event.stopImmediatePropagation();
+        },
+        true
+      );
+
+      (() => {
+        const stylesheet = document.createElement("link");
+        stylesheet.rel = "stylesheet";
+        stylesheet.href = `/static/css/${device}.css?${_A.config.v}`;
+        document.head.appendChild(stylesheet);
+
+        const script = document.createElement("script");
+        script.src = `/static/js/${device}.js?${_A.config.v}`;
+        script.async = true;
+        const mountRuntime = () => {
+          if (script.isConnected || !document.body) return;
+          document.body.appendChild(script);
+        };
+        if (document.readyState === "loading") {
+          document.addEventListener("DOMContentLoaded", mountRuntime, { once: true });
+        } else {
+          mountRuntime();
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <main id="app">
+      <div id="load" style="color: #bac4b8">
+        <span><span>0</span></span>
+        <span><span>0</span></span>
+        <span><span>1</span></span>
+      </div>
+    </main>
+    <noscript>
+      <div class="iss-w"><div class="iss">Please enable JavaScript to view this website.</div></div>
+    </noscript>
+  </body>
+</html>

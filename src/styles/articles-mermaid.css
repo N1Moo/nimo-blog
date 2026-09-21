@@ -1,0 +1,125 @@
+/* Mermaid diagrams follow the article monochrome reading palette. */
+.mermaid {
+  color: var(--article-ink);
+}
+
+.article-prose pre.mermaid {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-height: 12rem;
+  justify-content: flex-start;
+  padding: 1.25rem;
+  overflow-x: auto;
+  overflow-y: visible;
+  border-radius: 0.6rem;
+  scrollbar-gutter: stable;
+}
+
+.article-prose pre.mermaid[data-mermaid-state="loading"] {
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in oklab, var(--article-soft) 90%, transparent) 0%,
+      color-mix(in oklab, var(--article-soft-strong) 72%, transparent) 50%,
+      color-mix(in oklab, var(--article-soft) 90%, transparent) 100%
+    );
+  background-size: 220% 100%;
+  animation: mermaid-shimmer 1.5s linear infinite;
+}
+
+.article-prose pre.mermaid[data-mermaid-state="ready"] {
+  animation: none;
+  min-height: 0;
+}
+
+.article-prose .mermaid-error {
+  display: grid;
+  gap: 0.45rem;
+  color: var(--article-warning);
+  font-size: var(--type-meta, 0.9rem);
+  line-height: 1.55;
+}
+
+.article-prose .mermaid-error strong {
+  color: var(--article-ink);
+  font-size: inherit;
+}
+
+.article-prose pre.mermaid svg {
+  display: block;
+  flex: 0 0 auto;
+  max-width: none !important;
+  height: auto;
+  overflow: visible !important;
+}
+
+.mermaid * {
+  background-color: transparent !important;
+}
+
+.mermaid :is(text, span, div, p, .label, .messageText, .loopText, .noteText, .taskText, .classLabel .label),
+.mermaid :is(.edgeLabel, .edgeLabel p, .edgeLabel div, .edgeLabel span) {
+  color: var(--article-ink) !important;
+  fill: var(--article-ink) !important;
+  font-family: inherit !important;
+}
+
+.mermaid :is(.node rect, .node circle, .node ellipse, .node polygon, .node path, .actor) {
+  fill: var(--article-bg) !important;
+  stroke: var(--article-line-strong) !important;
+  stroke-width: 1.2px !important;
+}
+
+.mermaid :is(.edgePath .path, .flowchart-link, line, .messageLine0, .messageLine1) {
+  stroke: color-mix(in oklab, var(--article-ink) 72%, transparent) !important;
+  stroke-width: 1.2px !important;
+  fill: none !important;
+}
+
+.mermaid :is(.arrowheadPath, marker path) {
+  fill: color-mix(in oklab, var(--article-ink) 72%, transparent) !important;
+  stroke: none !important;
+}
+
+.mermaid :is(.edgeLabel rect, .labelBox) {
+  fill: var(--article-bg) !important;
+  background-color: var(--article-bg) !important;
+}
+
+.mermaid :is(.titleText, .classTitle, .cluster-label text) {
+  fill: var(--article-ink) !important;
+  color: var(--article-ink) !important;
+  font-weight: 650 !important;
+}
+
+.mermaid :is(.cluster rect, .cluster polygon) {
+  fill: transparent !important;
+  stroke: var(--article-line) !important;
+  stroke-width: 1px !important;
+}
+
+.mermaid .note,
+.mermaid :is(.task0, .task1, .task2, .task3),
+.mermaid :is(.section0, .section1, .section2, .section3) {
+  fill: var(--article-bg) !important;
+  stroke: var(--article-line-strong) !important;
+}
+
+[data-theme="dark"] .mermaid :is(.node rect, .node circle, .node ellipse, .node polygon, .node path, .actor),
+[data-theme="dark"] .mermaid .note,
+[data-theme="dark"] .mermaid :is(.task0, .task1, .task2, .task3),
+[data-theme="dark"] .mermaid :is(.section0, .section1, .section2, .section3) {
+  fill: var(--article-bg) !important;
+  stroke: var(--article-line-strong) !important;
+}
+
+@keyframes mermaid-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+
+  100% {
+    background-position: -200% 0;
+  }
+}

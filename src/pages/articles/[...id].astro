@@ -1,0 +1,1144 @@
+---
+import { getCollection, render } from "astro:content";
+import type { CollectionEntry } from "astro:content";
+import {
+  createArticleReferenceResolver,
+  extractArticleReferences,
+  getCanonicalArticleUrl,
+} from "@/lib/article-links";
+import {
+  assertUniqueArticleIdentities,
+  resolveArticleIdentity,
+} from "@/lib/article-history";
+import { getPrebuiltArticleHistory } from "@/lib/article-history/prebuilt.js";
+import ArticleHistory from "@/components/article/ArticleHistory.astro";
+import Layout from "@/components/layout/Layout.astro";
+import { SITE_META } from "@/consts";
+import * as siteConfig from "@/consts";
+import { createCanonicalUrl } from "@/lib/canonical-url.js";
+import "@/styles/articles.css";
+
+export const prerender = true;
+
+// 定义文章类型
+type ArticleEntry = CollectionEntry<"articles">;
+
+type ArticlePageProps = {
+  article: ArticleEntry;
+  section: string;
+};
+
+// 定义标题类型
+interface Heading {
+  depth: number;
+  slug: string;
+  text: string;
+}
+
+function escapeHtmlAttribute(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+// 生成文章摘要的辅助函数
+function generateArticleSummary(article: ArticleEntry): string {
+  if (article.data.summary) {
+    return article.data.summary;
+  }
+
+  // 如果没有summary，从文章内容中提取
+  const rawContent = article.body;
+  // 移除Markdown语法和空白字符
+  const plainText = rawContent
+    .replace(/\s+/g, " ") // 将多个空白字符替换为单个空格
+    .replace(/[#*`~>]/g, "") // 移除Markdown标记
+    .replace(/\[.*?\]\(.*?\)/g, "") // 移除Markdown链接
+    .replace(/!\[.*?\]\(.*?\)/g, "") // 移除Markdown图片
+    .replace(/```[\s\S]*?```/g, "") // 移除代码块
+    .trim();
+
+  return plainText.length > 150
+    ? plainText.substring(0, 150) + "..."
+    : plainText;
+}
+
+export async function getStaticPaths() {
+  const articles: ArticleEntry[] = await getCollection("articles");
+  assertUniqueArticleIdentities(articles);
+
+  return articles.map((article: ArticleEntry) => ({
+    params: { id: article.id },
+    props: {
+      article,
+      section: article.id.includes("/")
+        ? article.id.split("/").slice(0, -1).join("/")
+        : "",
+    },
+  }));
+}
+
+// 获取文章内容
+const { article, section } = Astro.props as ArticlePageProps;
+
+// 获取相关文章
+const allArticles = await getCollection("articles");
+assertUniqueArticleIdentities(allArticles);
+const articleIdentity = resolveArticleIdentity(article);
+const resolveArticleReference = createArticleReferenceResolver(allArticles);
+// 渲染文章内容
+const { Content, headings } = await render(article);
+const hasMermaidDiagrams = /(^|\n)```mermaid(?:\s|$)/.test(article.body);
+
+// 获取面包屑路径段
+const pathSegments: string[] = section ? section.split("/") : [];
+
+const backlinkArticles = allArticles
+  .filter(
+    (candidate: ArticleEntry) =>
+      resolveArticleIdentity(candidate) !== articleIdentity &&
+      extractArticleReferences(candidate.body, resolveArticleReference).has(articleIdentity),
+  )
+  .sort(
+    (a: ArticleEntry, b: ArticleEntry) =>
+      b.data.date.getTime() - a.data.date.getTime(),
+  );
+const visibleBacklinkArticles = backlinkArticles.slice(0, 6);
+const hiddenBacklinkCount = Math.max(backlinkArticles.length - visibleBacklinkArticles.length, 0);
+
+// 1. 尝试通过标签匹配相关文章
+let relatedArticles = allArticles
+  .filter((a: ArticleEntry) => {
+    const hasCommonTags =
+      a.id !== article.id &&
+      a.data.tags &&
+      article.data.tags &&
+      a.data.tags.length > 0 &&
+      article.data.tags.length > 0 &&
+      a.data.tags.some((tag: string) => article.data.tags?.includes(tag));
+
+    return hasCommonTags;
+  })
+  .sort(
+    (a: ArticleEntry, b: ArticleEntry) =>
+      b.data.date.getTime() - a.data.date.getTime(),
+  )
+  .slice(0, 3);
+
+// 跟踪相关文章的匹配方式: "tag", "directory", "latest"
+let relatedArticlesMatchType = relatedArticles.length > 0 ? "tag" : "";
+
+// 2. 如果标签匹配没有找到足够的相关文章，尝试根据目录结构匹配
+if (relatedArticles.length < 3) {
+  // 获取当前文章的目录路径
+  const currentPath = article.id.includes("/")
+    ? article.id.substring(0, article.id.lastIndexOf("/"))
+    : "";
+
+  // 如果有目录路径，查找同目录的其他文章
+  if (currentPath) {
+    // 收集同目录下的文章，但排除已经通过标签匹配的和当前文章
+    const dirRelatedArticles = allArticles
+      .filter(
+        (a: ArticleEntry) =>
+          a.id !== article.id &&
+          a.id.startsWith(currentPath + "/") &&
+          !relatedArticles.some((r: ArticleEntry) => r.id === a.id),
+      )
+      .sort(
+        (a: ArticleEntry, b: ArticleEntry) =>
+          b.data.date.getTime() - a.data.date.getTime(),
+      )
+      .slice(0, 3 - relatedArticles.length);
+
+    if (dirRelatedArticles.length > 0) {
+      relatedArticles = [...relatedArticles, ...dirRelatedArticles];
+      relatedArticlesMatchType =
+        relatedArticles.length > 0 && !relatedArticlesMatchType
+          ? "directory"
+          : relatedArticlesMatchType;
+    }
+  }
+}
+
+// 3. 如果仍然没有找到足够的相关文章，则选择最新的文章（排除当前文章和已选择的文章）
+if (relatedArticles.length < 3) {
+  const latestArticles = allArticles
+    .filter(
+      (a: ArticleEntry) =>
+        a.id !== article.id &&
+        !relatedArticles.some((r: ArticleEntry) => r.id === a.id),
+    )
+    .sort(
+      (a: ArticleEntry, b: ArticleEntry) =>
+        b.data.date.getTime() - a.data.date.getTime(),
+    )
+    .slice(0, 3 - relatedArticles.length);
+
+  if (latestArticles.length > 0) {
+    relatedArticles = [...relatedArticles, ...latestArticles];
+    relatedArticlesMatchType =
+      relatedArticles.length > 0 && !relatedArticlesMatchType
+        ? "latest"
+        : relatedArticlesMatchType;
+  }
+}
+
+// 准备文章描述
+const description = generateArticleSummary(article);
+
+function getArticleUrl(article: ArticleEntry) {
+  return getCanonicalArticleUrl(article.id);
+}
+
+function formatArticleDate(date: Date) {
+  return date.toLocaleDateString("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+}
+
+function getRelatedTitle(matchType: string) {
+  if (matchType === "latest") return "推荐阅读";
+  return "相关文章";
+}
+
+const articleHistory = await getPrebuiltArticleHistory(article);
+const articleWarningDate = articleHistory.updatedAt ?? article.data.date;
+const DEFAULT_ARTICLE_EXPIRY_CONFIG = {
+  enabled: false,
+  expiryDays: 365,
+  warningMessage: "这篇文章最近一次更新距离现在已经超过一年了，内容可能已经过时，请谨慎参考。",
+};
+type OptionalSiteConfig = typeof siteConfig & {
+  ARTICLE_EXPIRY_CONFIG?: Partial<typeof DEFAULT_ARTICLE_EXPIRY_CONFIG>;
+};
+const optionalSiteConfig = siteConfig as OptionalSiteConfig;
+const siteArticleExpiryConfig = {
+  ...DEFAULT_ARTICLE_EXPIRY_CONFIG,
+  ...(optionalSiteConfig.ARTICLE_EXPIRY_CONFIG ?? {}),
+};
+
+const shouldShowArticleWarning = (() => {
+  const currentDate = new Date();
+  const daysDiff = Math.floor(
+    (currentDate.getTime() - articleWarningDate.getTime()) /
+      (1000 * 60 * 60 * 24),
+  );
+
+  return (
+    siteArticleExpiryConfig.enabled &&
+    daysDiff > siteArticleExpiryConfig.expiryDays
+  );
+})();
+
+const visibleHistoryEvents: any[] = articleHistory.events.slice(0, 6);
+const articleCanonicalPath = getCanonicalArticleUrl(article.id);
+const articleCanonicalUrl = createCanonicalUrl(articleCanonicalPath, SITE_META.url);
+const articleUpdatedAt = articleWarningDate;
+const articleSection = section || "articles";
+const articleJsonLd = {
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  headline: article.data.title,
+  description,
+  url: articleCanonicalUrl,
+  mainEntityOfPage: articleCanonicalUrl,
+  datePublished: article.data.date.toISOString(),
+  dateModified: articleUpdatedAt.toISOString(),
+  articleSection,
+  keywords: article.data.tags ?? [],
+  author: {
+    "@type": "Person",
+    name: SITE_META.author,
+  },
+  publisher: {
+    "@type": "Organization",
+    name: SITE_META.title,
+    url: SITE_META.url,
+  },
+};
+const breadcrumbItems = [
+  {
+    name: SITE_META.title,
+    item: SITE_META.url,
+  },
+  {
+    name: "文章",
+    item: new URL("/articles", SITE_META.url).toString(),
+  },
+  ...pathSegments.map((segment, index) => {
+    const segmentPath = pathSegments.slice(0, index + 1).join("/");
+
+    return {
+      name: segment,
+      item: createCanonicalUrl(`/articles/${segmentPath}`, SITE_META.url),
+    };
+  }),
+  {
+    name: article.data.title,
+    item: articleCanonicalUrl,
+  },
+];
+const breadcrumbJsonLd = {
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  itemListElement: breadcrumbItems.map((item, index) => ({
+    "@type": "ListItem",
+    position: index + 1,
+    name: item.name,
+    item: item.item,
+  })),
+};
+
+// 预先生成目录结构
+function generateTableOfContents(headings: Heading[]) {
+  if (!headings || headings.length === 0) {
+    return '<p class="toc-empty italic">此文章没有目录</p>';
+  }
+
+  // 查找最低级别的标题（数值最小）
+  const minDepth = Math.min(...headings.map((h) => h.depth));
+
+  // 按照标题层级构建嵌套结构
+  const tocTree: any[] = [];
+  const levelMap: Record<number, any[]> = {};
+
+  headings.forEach((heading) => {
+    const relativeDepth = heading.depth - minDepth;
+
+    // 构建标题项
+    const headingItem = {
+      slug: heading.slug,
+      text: heading.text,
+      depth: relativeDepth,
+      children: [],
+    };
+
+    // 更精确地处理嵌套关系
+    if (relativeDepth === 0) {
+      // 顶级标题直接加入到树中
+      tocTree.push(headingItem);
+      levelMap[0] = tocTree;
+    } else {
+      // 查找当前标题的父级
+      let parentDepth = relativeDepth - 1;
+      // 向上查找可能的父级
+      while (parentDepth >= 0 && !levelMap[parentDepth]) {
+        parentDepth--;
+      }
+
+      if (
+        parentDepth >= 0 &&
+        levelMap[parentDepth] &&
+        levelMap[parentDepth].length > 0
+      ) {
+        // 找到父层级，将此标题添加到最近的父标题的子标题数组中
+        const parentItems = levelMap[parentDepth];
+        const parent = parentItems[parentItems.length - 1];
+        parent.children.push(headingItem);
+
+        // 更新当前深度的映射
+        if (!levelMap[relativeDepth]) {
+          levelMap[relativeDepth] = [];
+        }
+        levelMap[relativeDepth].push(headingItem);
+      } else {
+        // 找不到有效父级，作为顶级标题处理
+        tocTree.push(headingItem);
+        levelMap[relativeDepth] = [headingItem];
+      }
+    }
+  });
+
+  // 递归生成HTML
+  function generateTocHTML(items: any[], level = 0) {
+    if (items.length === 0) return "";
+
+    const isTopLevel = level === 0;
+    const sublistAttributes = level > 0
+      ? ' data-expanded="false" aria-expanded="false"'
+      : "";
+    let html = `<ul class="toc-list space-y-2${isTopLevel ? "" : " toc-sublist"}"${sublistAttributes}>`;
+
+    items.forEach((item) => {
+      const hasChildren = item.children && item.children.length > 0;
+      const isHigherLevel = item.depth <= 1; // 只有最高级和次高级标题使用较重的样式
+      const titleText = escapeHtmlAttribute(item.text);
+
+      html += `<li class="toc-item" data-depth="${item.depth}">
+        <div class="toc-item-container">
+          <a href="#${item.slug}" 
+             class="toc-link ${
+               isHigherLevel
+                 ? "toc-link-strong font-medium"
+                 : "toc-link-muted"
+             }"
+             title="${titleText}"
+             style="--toc-indent: ${item.depth * 0.85}rem;">
+            ${item.text}
+          </a>
+          ${
+            hasChildren
+              ? `<button class="toc-toggle ml-1 p-1" aria-expanded="false" aria-label="${item.text} 的子目录">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+            </svg>
+          </button>`
+              : ""
+          }
+        </div>
+        ${generateTocHTML(item.children, level + 1)}
+      </li>`;
+    });
+
+    html += "</ul>";
+    return html;
+  }
+
+  return generateTocHTML(tocTree);
+}
+
+// 生成目录HTML
+const tableOfContents = generateTableOfContents(headings);
+---
+
+<Layout
+  title={article.data.title}
+  description={description}
+  date={article.data.date}
+  updatedDate={articleHistory.updatedAt ?? undefined}
+  tags={article.data.tags}
+  keywords={article.data.tags}
+  jsonLd={[articleJsonLd, breadcrumbJsonLd]}
+  pageType="article"
+>
+  <div class="article-shell">
+    <!-- 阅读进度条 -->
+    <div
+      class="fixed top-0 left-0 w-full h-1 bg-transparent z-50"
+      id="progress-container"
+    >
+      <div
+        class="article-progress-bar h-full w-0 transition-width duration-100"
+        id="progress-bar"
+      >
+      </div>
+    </div>
+
+    <nav class="article-topbar" aria-label="文章路径">
+      <div class="article-breadcrumb">
+        <a
+          href="/articles"
+          data-article-directory-link
+          data-astro-prefetch="hover"
+        >
+          文章
+        </a>
+        {pathSegments.map((segment, index) => {
+          const segmentPath = pathSegments.slice(0, index + 1).join("/");
+
+          return (
+            <>
+              <span aria-hidden="true">/</span>
+              <a
+                href={`/articles/${segmentPath}`}
+                data-article-directory-link
+                data-astro-prefetch="hover"
+              >
+                {segment}
+              </a>
+            </>
+          );
+        })}
+        <span aria-hidden="true">/</span>
+        <span aria-current="page">{article.data.title}</span>
+      </div>
+      <a
+        class="article-return-link"
+        href={section ? `/articles/${section}` : "/articles"}
+        data-article-directory-link
+        data-astro-prefetch="hover"
+      >
+        ← 返回文章列表
+      </a>
+    </nav>
+
+    <div
+      id="article-content"
+      class="article-layout"
+    >
+      <article class="article-main">
+        <header class="article-head">
+          <div class="article-meta-line">
+            <div class="article-date-stack">
+              <time
+                datetime={article.data.date.toISOString()}
+                class="article-date"
+              >
+                published {formatArticleDate(article.data.date)}
+              </time>
+              {
+                articleHistory.updatedAt && (
+                  <time
+                    datetime={articleHistory.updatedAt.toISOString()}
+                    class="article-date article-updated-date"
+                  >
+                    updated {formatArticleDate(articleHistory.updatedAt)}
+                  </time>
+                )
+              }
+            </div>
+            {
+              article.data.tags && article.data.tags.length > 0 && (
+                <div class="article-tags" aria-label="文章标签">
+                  {article.data.tags.slice(0, 8).map((tag: string) => (
+                    <a
+                      href={`/filtered?tags=${tag}`}
+                      class="article-tag"
+                      data-astro-prefetch="hover"
+                    >
+                      #{tag}
+                    </a>
+                  ))}
+                  {
+                    article.data.tags.length > 8 && (
+                      <span class="article-tag tag-more">
+                        +{article.data.tags.length - 8}
+                      </span>
+                    )
+                  }
+                </div>
+              )
+            }
+          </div>
+          <h1 class="article-title">{article.data.title}</h1>
+        </header>
+
+        {
+          shouldShowArticleWarning && (
+            <p class="article-warning">
+              <strong>版本提示</strong>
+              <span>{siteArticleExpiryConfig.warningMessage}</span>
+            </p>
+          )
+        }
+
+        <div class="article-prose prose prose-lg dark:prose-invert max-w-none">
+          <Content />
+        </div>
+
+        <footer class="article-footer">
+          <ArticleHistory events={visibleHistoryEvents} />
+
+          <div class="article-relations" aria-label="文章关系">
+            {
+              relatedArticles.length > 0 && (
+                <section class="article-relation related" aria-label={getRelatedTitle(relatedArticlesMatchType)}>
+                  <div class="article-relation-head related-head">
+                    <h2>
+                      {getRelatedTitle(relatedArticlesMatchType)}
+                      <span class="article-relation-count related-count">
+                        {relatedArticles.slice(0, 3).length}
+                      </span>
+                    </h2>
+                  </div>
+                  <ul class="article-relation-list related-list">
+                    {relatedArticles.slice(0, 3).map((relatedArticle: ArticleEntry, index: number) => {
+                      const relatedSummary = generateArticleSummary(relatedArticle);
+
+                      return (
+                        <li>
+                          <a
+                            class="article-relation-link related-item"
+                            href={getArticleUrl(relatedArticle)}
+                            data-astro-prefetch="viewport"
+                          >
+                            <span class="article-relation-index related-index">
+                              {String(index + 1).padStart(2, "0")}
+                            </span>
+                            <span class="article-relation-copy related-copy">
+                              <strong>{relatedArticle.data.title}</strong>
+                              <span>{relatedSummary}</span>
+                              <time
+                                class="article-relation-date related-date"
+                                datetime={relatedArticle.data.date.toISOString()}
+                              >
+                                {formatArticleDate(relatedArticle.data.date)}
+                              </time>
+                            </span>
+                            <span class="article-relation-cue" aria-hidden="true">→</span>
+                          </a>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </section>
+              )
+            }
+
+            <section class="article-relation backlinks-section" aria-label="反向链接">
+              <div class="article-relation-head backlinks-head">
+                <h2>
+                  反向链接
+                  <span class="article-relation-count backlinks-count">{backlinkArticles.length}</span>
+                </h2>
+              </div>
+              {
+                visibleBacklinkArticles.length > 0 ? (
+                  <div class="side-scroll backlinks-scroll">
+                    <ul class="article-relation-list backlink-list">
+                      {visibleBacklinkArticles.map((backlinkArticle: ArticleEntry, index: number) => (
+                        <li>
+                          <a
+                            href={getArticleUrl(backlinkArticle)}
+                            class="article-relation-link backlink-link"
+                            data-astro-prefetch="hover"
+                          >
+                            <span class="article-relation-index backlink-index" aria-hidden="true">
+                              {String(index + 1).padStart(2, "0")}
+                            </span>
+                            <span class="article-relation-copy backlink-copy">
+                              <strong>{backlinkArticle.data.title}</strong>
+                              <span>{formatArticleDate(backlinkArticle.data.date)}</span>
+                            </span>
+                            <span class="article-relation-cue" aria-hidden="true">→</span>
+                          </a>
+                        </li>
+                      ))}
+                    </ul>
+                    {
+                      hiddenBacklinkCount > 0 && (
+                        <p class="backlinks-more">
+                          还有 {hiddenBacklinkCount} 篇引用暂未展开
+                        </p>
+                      )
+                    }
+                  </div>
+                ) : (
+                  <p class="backlinks-empty">
+                    暂时还没有文章链接到这里。
+                  </p>
+                )
+              }
+            </section>
+          </div>
+        </footer>
+
+        <button
+          id="back-to-top"
+          class="article-back-to-top fixed bottom-8 right-8 w-12 h-12 rounded-full flex items-center justify-center opacity-0 invisible translate-y-5"
+          aria-label="回到顶部"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            class="h-6 w-6"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            aria-hidden="true"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M5 10l7-7m0 0l7 7m-7-7v18"
+            />
+          </svg>
+        </button>
+      </article>
+
+      <aside class="article-side" id="toc-panel">
+        <section class="side-block">
+          <h2>文章目录</h2>
+          <div
+            id="toc-content"
+            class="side-scroll article-toc-content"
+            set:html={tableOfContents}
+          />
+        </section>
+      </aside>
+  </div>
+  <!-- 文章页面脚本 -->
+  <script is:inline>
+    // 文章页面交互脚本 - 自销毁模式
+    (function () {
+      // 集中管理所有事件监听器
+      const allListeners = [];
+
+      // 为特殊清理任务准备的数组
+      const customCleanupTasks = [];
+
+      // 单独保存清理事件的监听器引用
+      const cleanupListeners = [];
+
+      // 添加事件监听器并记录，方便后续统一清理
+      function addListener(element, eventType, handler, options) {
+        if (!element) {
+          return null;
+        }
+
+        element.addEventListener(eventType, handler, options);
+        allListeners.push({ element, eventType, handler, options });
+        return handler;
+      }
+
+      // 统一的清理函数，执行完整清理并自销毁
+      function selfDestruct() {
+        // 1. 先移除普通事件监听器
+        allListeners.forEach(({ element, eventType, handler, options }) => {
+          try {
+            element.removeEventListener(eventType, handler, options);
+          } catch (err) {
+            console.error("移除事件监听器出错:", err);
+          }
+        });
+
+        // 清空监听器数组
+        allListeners.length = 0;
+
+        // 2. 执行特殊清理任务
+        customCleanupTasks.forEach((task) => {
+          try {
+            task();
+          } catch (err) {
+            console.error("执行特殊清理任务出错:", err);
+          }
+        });
+
+        // 清空特殊任务数组
+        customCleanupTasks.length = 0;
+
+        // 3. 最后移除清理事件监听器自身
+        cleanupListeners.forEach(({ element, eventType, handler, options }) => {
+          try {
+            element.removeEventListener(eventType, handler, options);
+          } catch (err) {
+            console.error("移除清理监听器出错:", err);
+          }
+        });
+      }
+
+      // 注册清理事件，并保存引用
+      function registerCleanupEvents() {
+        // 创建统一的清理处理函数
+        const cleanup = () => {
+          selfDestruct();
+        };
+
+        // 定义需要监听的所有清理事件
+        const cleanupEventTypes = [
+          {
+            element: document,
+            eventType: "astro:before-swap",
+            options: { once: true },
+          },
+          {
+            element: window,
+            eventType: "beforeunload",
+            options: { once: true },
+          },
+          {
+            element: document,
+            eventType: "page-transition",
+            options: { once: true },
+          },
+        ];
+
+        // 注册所有清理事件
+        cleanupEventTypes.forEach(({ element, eventType, options }) => {
+          // 添加事件监听
+          element.addEventListener(eventType, cleanup, options);
+
+          // 保存事件引用到清理列表
+          cleanupListeners.push({
+            element,
+            eventType,
+            handler: cleanup,
+            options,
+          });
+        });
+      }
+
+      // 初始化所有功能
+      function initializeFeatures() {
+        // 1. 代码块复制功能
+        function setupCodeCopy() {
+          const copyButtons = document.querySelectorAll(".code-block-copy");
+          if (copyButtons.length === 0) {
+            return;
+          }
+
+          copyButtons.forEach((button) => {
+            addListener(button, "click", async (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+
+              try {
+                const encodedCode = button.getAttribute("data-code");
+                if (!encodedCode) return;
+
+                // 解码Base64编码的代码，正确处理UTF-8字符
+                const code = new TextDecoder("utf-8").decode(
+                  Uint8Array.from(atob(encodedCode), (c) => c.charCodeAt(0)),
+                );
+                await navigator.clipboard.writeText(code);
+
+                // 保存原始SVG
+                const originalSVG = button.innerHTML;
+
+                // 添加已复制状态类，伪元素会自动显示"已复制"文本
+                button.classList.add("copied");
+
+                // 更改SVG为对勾图标
+                button.innerHTML = `
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
+                  <path d="M20 6L9 17l-5-5"></path>
+                </svg>
+              `;
+
+                setTimeout(() => {
+                  // 恢复原始状态
+                  button.classList.remove("copied");
+                  button.innerHTML = originalSVG;
+                }, 2000);
+              } catch (err) {
+                console.error("复制失败:", err);
+                // 更改SVG为错误图标，伪元素文本不变
+                button.innerHTML = `
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <line x1="12" y1="8" x2="12" y2="12"></line>
+                  <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                </svg>
+              `;
+                // 添加特殊类以显示"失败"文本
+                button.classList.add("copy-failed");
+
+                setTimeout(() => {
+                  // 恢复原始状态
+                  button.classList.remove("copy-failed");
+                  button.innerHTML = `
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                  </svg>
+                `;
+                }, 2000);
+              }
+            });
+          });
+        }
+
+        // 2. 阅读进度条
+        function setupProgressBar() {
+          const progressBar = document.getElementById("progress-bar");
+          const backToTopButton = document.getElementById("back-to-top");
+
+          if (!progressBar) {
+            return;
+          }
+
+          function updateReadingProgress() {
+            const scrollTop =
+              window.scrollY || document.documentElement.scrollTop;
+            const scrollHeight =
+              document.documentElement.scrollHeight -
+              document.documentElement.clientHeight;
+            const progress = (scrollTop / scrollHeight) * 100;
+
+            progressBar.style.width = `${progress}%`;
+
+            if (backToTopButton) {
+              if (scrollTop > 300) {
+                backToTopButton.classList.add(
+                  "opacity-100",
+                  "visible",
+                  "translate-y-0",
+                );
+                backToTopButton.classList.remove(
+                  "opacity-0",
+                  "invisible",
+                  "translate-y-5",
+                );
+              } else {
+                backToTopButton.classList.add(
+                  "opacity-0",
+                  "invisible",
+                  "translate-y-5",
+                );
+                backToTopButton.classList.remove(
+                  "opacity-100",
+                  "visible",
+                  "translate-y-0",
+                );
+              }
+            }
+          }
+
+          addListener(window, "scroll", updateReadingProgress);
+
+          if (backToTopButton) {
+            addListener(backToTopButton, "click", () => {
+              window.scrollTo({
+                top: 0,
+                behavior: "smooth",
+              });
+            });
+          }
+
+          // 初始更新一次进度条
+          updateReadingProgress();
+        }
+
+        // 3. 目录交互
+        function setupTableOfContents() {
+          const tocContent = document.getElementById("toc-content");
+          const tocPanel = document.querySelector("#toc-panel");
+
+          if (!tocPanel || !tocContent) {
+            return;
+          }
+
+          function getTocSublist(item) {
+            return Array.from(item.children).find((child) =>
+              child.classList?.contains("toc-sublist"),
+            );
+          }
+
+          function getTocToggle(item) {
+            const container = Array.from(item.children).find((child) =>
+              child.classList?.contains("toc-item-container"),
+            );
+
+            return container?.querySelector(".toc-toggle") || null;
+          }
+
+          function setTocBranchExpanded(item, expanded) {
+            const sublist = getTocSublist(item);
+            const toggle = getTocToggle(item);
+
+            if (sublist) {
+              sublist.setAttribute("data-expanded", expanded ? "true" : "false");
+              sublist.setAttribute("aria-expanded", expanded ? "true" : "false");
+            }
+
+            if (toggle) {
+              toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+            }
+          }
+
+          // 处理目录折叠/展开功能
+          const tocToggles = tocContent.querySelectorAll(".toc-toggle");
+
+          tocToggles.forEach((toggle) => {
+            addListener(toggle, "click", (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+
+              const expanded = toggle.getAttribute("aria-expanded") === "true";
+
+              // 切换子菜单显示状态
+              const listItem = toggle.closest(".toc-item");
+              if (listItem) {
+                setTocBranchExpanded(listItem, !expanded);
+              }
+            });
+          });
+
+          // 处理目录链接点击跳转
+          const tocLinks = tocContent.querySelectorAll(".toc-link");
+
+          tocLinks.forEach((link) => {
+            addListener(link, "click", (e) => {
+              e.preventDefault();
+              const targetId = link.getAttribute("href")?.substring(1);
+              if (!targetId) return;
+
+              const targetElement = document.getElementById(targetId);
+              if (targetElement) {
+                const offset = 100;
+                const targetPosition =
+                  targetElement.getBoundingClientRect().top +
+                  window.scrollY -
+                  offset;
+
+                window.scrollTo({
+                  top: targetPosition,
+                  behavior: "smooth",
+                });
+
+                // 增强高亮效果
+                targetElement.classList.add("article-heading-flash");
+                setTimeout(() => {
+                  targetElement.classList.remove("article-heading-flash");
+                }, 2000);
+              }
+            });
+          });
+
+          let ticking = false;
+
+          function updateActiveHeading() {
+            const headings = Array.from(
+              document.querySelectorAll(
+                ".article-prose h1, .article-prose h2, .article-prose h3, .article-prose h4, .article-prose h5, .article-prose h6",
+              ),
+            );
+            const tocLinks = Array.from(
+              tocContent.querySelectorAll(".toc-link"),
+            );
+
+            // 清除所有活动状态
+            tocLinks.forEach((link) => {
+              // 移除活动类
+              link.classList.remove(
+                "toc-link-active",
+                "font-medium",
+              );
+            });
+
+            // 找出当前可见的标题
+            const scrollPosition = window.scrollY + 150;
+            let currentHeading = headings[0] || null;
+
+            for (const heading of headings) {
+              const headingTop =
+                heading.getBoundingClientRect().top + window.scrollY;
+              if (headingTop <= scrollPosition) {
+                currentHeading = heading;
+              } else {
+                break;
+              }
+            }
+
+            // 记录当前活动的项目和其所有父级
+            const activeItems = new Set();
+
+            // 高亮当前标题对应的目录项并展开父菜单
+            if (currentHeading) {
+              const id = currentHeading.getAttribute("id");
+              if (id) {
+                const activeLink = tocLinks.find(
+                  (link) => link.getAttribute("href") === `#${id}`,
+                );
+                if (activeLink) {
+                  // 高亮当前目录项
+                  activeLink.classList.add(
+                    "toc-link-active",
+                    "font-medium",
+                  );
+
+                  // 展开当前激活项的所有父菜单并收集到活动项集合中
+                  let parent = activeLink.closest(".toc-item");
+                  while (parent) {
+                    // 添加到活动项目集合
+                    activeItems.add(parent);
+
+                    const parentSublist = getTocSublist(parent);
+                    if (parentSublist?.getAttribute("data-expanded") !== "true") {
+                      // 使用平滑动画展开
+                      setTocBranchExpanded(parent, true);
+                    }
+
+                    // 向上查找父级
+                    parent = parent.parentElement?.closest(".toc-item");
+                  }
+
+                  // 确保当前激活的目录项在可视区域内 - 添加平滑滚动
+                  setTimeout(() => {
+                    // 延迟执行确保DOM已更新
+                    if (tocContent) {
+                      // 重新计算activeLink的位置，因为父菜单可能已展开
+                      const linkRect = activeLink.getBoundingClientRect();
+                      const containerRect = tocContent.getBoundingClientRect();
+
+                      // 检查当前项是否在目录容器的可视区域内
+                      const isInView =
+                        linkRect.top >= containerRect.top &&
+                        linkRect.bottom <= containerRect.bottom;
+
+                      // 如果当前激活项不在视口内，滚动目录
+                      if (!isInView) {
+                        // 计算滚动位置，使激活项在容器中居中
+                        const scrollTop =
+                          tocContent.scrollTop +
+                          (linkRect.top - containerRect.top) -
+                          containerRect.height / 2 +
+                          linkRect.height / 2;
+
+                        tocContent.scrollTo({
+                          top: scrollTop,
+                          behavior: "smooth",
+                        });
+                      }
+                    }
+                  }, 100); // 添加短延迟确保DOM已更新
+                }
+              }
+            }
+
+            // 关闭不在当前活动路径上的所有子菜单 - 使用平滑动画
+            const allItems = Array.from(
+              tocContent.querySelectorAll(".toc-item"),
+            );
+            allItems.forEach((item) => {
+              // 如果不在活动路径上且有子菜单
+              if (!activeItems.has(item)) {
+                const sublist = getTocSublist(item);
+
+                if (sublist?.getAttribute("data-expanded") === "true") {
+                  setTocBranchExpanded(item, false);
+                }
+              }
+            });
+          }
+
+          addListener(window, "scroll", () => {
+            if (!ticking) {
+              window.requestAnimationFrame(() => {
+                updateActiveHeading();
+                ticking = false;
+              });
+              ticking = true;
+            }
+          });
+
+          // 初始化时收起所有子菜单
+          tocContent.querySelectorAll(".toc-item").forEach((item) => {
+            setTocBranchExpanded(item, false);
+          });
+
+          // 初始更新一次活动标题，确保相关父菜单展开
+          updateActiveHeading();
+        }
+
+        // 启动所有功能
+        setupCodeCopy();
+        setupProgressBar();
+        setupTableOfContents();
+      }
+
+      // 执行初始化
+      registerCleanupEvents();
+      initializeFeatures();
+    })();
+  </script>
+  {
+    hasMermaidDiagrams && (
+      <script>
+        import { initArticleMermaid } from "../../lib/article-mermaid.ts";
+
+        initArticleMermaid();
+      </script>
+    )
+  }
+  <script>
+    import { initArticleMediaViewer } from "../../lib/article-media-viewer.ts";
+
+    initArticleMediaViewer();
+  </script>
+</Layout>

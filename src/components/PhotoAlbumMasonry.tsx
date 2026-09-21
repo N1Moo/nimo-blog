@@ -1,0 +1,1153 @@
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Masonry from "react-masonry-css";
+
+interface PhotoAlbumMasonryProps {
+  shareId: string;
+  title?: string;
+  showTitle?: boolean;
+  className?: string;
+}
+
+interface PhotoItem {
+  index: number;
+  id: string;
+  mediaType: "photo" | "video";
+  width: number | null;
+  height: number | null;
+  takenAt: string | null;
+  durationMs: number | null;
+  thumbUrl: string;
+  fallbackThumbUrl?: string | null;
+  displayUrl: string;
+  fallbackDisplayUrl?: string | null;
+  previewUrl: string;
+  fallbackPreviewUrl?: string | null;
+  originalLikeUrl: string | null;
+  fallbackOriginalLikeUrl?: string | null;
+  videoUrl: string | null;
+  fallbackVideoUrl?: string | null;
+}
+
+interface AlbumInfo {
+  title: string | null;
+}
+
+interface AlbumResponse {
+  album: AlbumInfo;
+  photos: PhotoItem[];
+  nextCursor: string | null;
+}
+
+interface ScrollLockState {
+  scrollX: number;
+  scrollY: number;
+}
+
+type PreviewVideoPhase = "idle" | "preloading" | "ready" | "playing" | "buffering" | "paused" | "error";
+
+const REVEAL_BATCH_SIZE = 15;
+const CLIENT_TIMEOUT_MS = 12000;
+const GOOGLE_PHOTOS_SHARE_URL_BASE = "https://photos.app.goo.gl/";
+const EMPTY_IMAGE_SRC =
+  "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
+
+const breakpointColumns = {
+  default: 5,
+  1280: 4,
+  1024: 3,
+  640: 2,
+};
+
+const formatDuration = (durationMs: number | null) => {
+  if (!durationMs) {
+    return null;
+  }
+
+  const totalSeconds = Math.floor(durationMs / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+};
+
+const getTakenAtValue = (takenAt: string | null) => {
+  if (!takenAt) {
+    return Number.NEGATIVE_INFINITY;
+  }
+
+  const parsed = Date.parse(takenAt);
+  return Number.isNaN(parsed) ? Number.NEGATIVE_INFINITY : parsed;
+};
+
+const sortPhotosForDisplay = (items: PhotoItem[]) =>
+  [...items].sort((left, right) => {
+    const leftTakenAt = getTakenAtValue(left.takenAt);
+    const rightTakenAt = getTakenAtValue(right.takenAt);
+
+    if (leftTakenAt !== rightTakenAt) {
+      return rightTakenAt - leftTakenAt;
+    }
+
+    if (left.index !== right.index) {
+      return left.index - right.index;
+    }
+
+    return left.id.localeCompare(right.id);
+  });
+
+const PhotoAlbumMasonry: React.FC<PhotoAlbumMasonryProps> = ({
+  shareId,
+  title,
+  showTitle = true,
+  className = "",
+}) => {
+  const [album, setAlbum] = useState<AlbumInfo | null>(null);
+  const [photos, setPhotos] = useState<PhotoItem[]>([]);
+  const [visibleCount, setVisibleCount] = useState(REVEAL_BATCH_SIZE);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [hasMoreContent, setHasMoreContent] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const [imageFailureCount, setImageFailureCount] = useState(0);
+  const [loadedMediaIds, setLoadedMediaIds] = useState<Record<string, true>>({});
+  const [previewThumbLoaded, setPreviewThumbLoaded] = useState(false);
+  const [previewFullLoaded, setPreviewFullLoaded] = useState(false);
+  const [previewVideoPhase, setPreviewVideoPhase] = useState<PreviewVideoPhase>("idle");
+  const [previewVideoRequested, setPreviewVideoRequested] = useState(false);
+  const [previewVideoPlayRequested, setPreviewVideoPlayRequested] = useState(false);
+  const [previewVideoAspectRatio, setPreviewVideoAspectRatio] = useState<number | null>(null);
+  const [previewVideoFailed, setPreviewVideoFailed] = useState(false);
+
+  const observerRef = useRef<IntersectionObserver | null>(null);
+  const scrollDetectorRef = useRef<HTMLDivElement | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const isMountedRef = useRef(true);
+  const imageFailureIdsRef = useRef(new Set<string>());
+  const scrollLockStateRef = useRef<ScrollLockState | null>(null);
+  const previewVideoRef = useRef<HTMLVideoElement | null>(null);
+  const previewPosterImageRef = useRef<HTMLImageElement | null>(null);
+  const previewImageElementRef = useRef<HTMLImageElement | null>(null);
+  const previewFullImageElementRef = useRef<HTMLImageElement | null>(null);
+
+  const stateRef = useRef({
+    isLoading: false,
+    hasMoreContent: true,
+    visibleCount: REVEAL_BATCH_SIZE,
+    photosLength: 0,
+    nextCursor: null as string | null,
+  });
+
+  const orderedPhotos = useMemo(() => sortPhotosForDisplay(photos), [photos]);
+  const visiblePhotos = useMemo(
+    () => orderedPhotos.slice(0, visibleCount),
+    [orderedPhotos, visibleCount],
+  );
+
+  const selectedPhoto = selectedIndex !== null ? orderedPhotos[selectedIndex] : null;
+  const selectedPhotoOrder = selectedIndex !== null ? selectedIndex + 1 : null;
+  const isPreviewOpen = selectedIndex !== null;
+  const networkHint =
+    imageFailureCount >= 3
+      ? "检测到多张图片加载失败，当前网络可能无法访问 Google Photos 资源。"
+      : null;
+  const hasLoadedEmptyAlbum = !isLoading && !error && photos.length === 0 && !hasMoreContent;
+  const previewImageUrl = selectedPhoto?.previewUrl || selectedPhoto?.displayUrl || null;
+  const previewFullImageUrl =
+    selectedPhoto?.originalLikeUrl || selectedPhoto?.previewUrl || selectedPhoto?.displayUrl || null;
+  const resolvedPreviewVideoAspectRatio =
+    previewVideoAspectRatio ||
+    (selectedPhoto?.width && selectedPhoto?.height ? selectedPhoto.width / selectedPhoto.height : null);
+  const previewAspectRatio =
+    selectedPhoto?.mediaType === "video"
+      ? resolvedPreviewVideoAspectRatio || 16 / 9
+      : selectedPhoto?.width && selectedPhoto?.height
+      ? selectedPhoto.width / selectedPhoto.height
+      : 1;
+  const previewFrameWidth =
+    previewAspectRatio ? `min(100%, calc(80vh * ${previewAspectRatio}))` : "100%";
+  const shouldLoadFullPreviewImage =
+    Boolean(previewFullImageUrl) &&
+    previewFullImageUrl !== previewImageUrl &&
+    previewThumbLoaded;
+  const previewVideoStatusText =
+    previewVideoPhase === "error"
+      ? "视频加载失败，请重试"
+      : "点击播放视频";
+  const isPreviewVideoOverlayVisible = !previewVideoPlayRequested || previewVideoPhase === "error";
+  const isPreviewVideoPlayButtonVisible = !previewVideoPlayRequested || previewVideoPhase === "error";
+  const previewIconButtonClassName =
+    "z-10 flex h-12 w-12 items-center justify-center rounded-full border border-white/65 bg-white/90 text-neutral-900 shadow-[0_18px_40px_rgba(15,23,42,0.24)] ring-1 ring-black/5 backdrop-blur-md transition duration-200 hover:scale-[1.03] hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/90 active:scale-100 dark:border-white/12 dark:bg-neutral-950/88 dark:text-neutral-50 dark:ring-white/10 dark:hover:bg-neutral-900/92 dark:focus-visible:ring-white/30";
+
+  const abortImageRequest = useCallback((image: HTMLImageElement | null) => {
+    if (!image) {
+      return;
+    }
+
+    image.onload = null;
+    image.onerror = null;
+    image.removeAttribute("src");
+    image.src = EMPTY_IMAGE_SRC;
+  }, []);
+
+  const stopPreviewMediaRequests = useCallback(() => {
+    const video = previewVideoRef.current;
+
+    if (video) {
+      video.pause();
+      video.preload = "none";
+      video.removeAttribute("src");
+      video.removeAttribute("poster");
+      video.load();
+    }
+
+    abortImageRequest(previewPosterImageRef.current);
+    abortImageRequest(previewImageElementRef.current);
+    abortImageRequest(previewFullImageElementRef.current);
+  }, [abortImageRequest]);
+
+  const syncPreviewVideoAspectRatio = useCallback((video: HTMLVideoElement | null) => {
+    if (!video || !(video.videoWidth > 0) || !(video.videoHeight > 0)) {
+      return;
+    }
+
+    setPreviewVideoAspectRatio(video.videoWidth / video.videoHeight);
+  }, []);
+
+  const preloadPreviewVideo = useCallback(({ silent = false }: { silent?: boolean } = {}) => {
+    if (!selectedPhoto?.videoUrl) {
+      return;
+    }
+
+    const video = previewVideoRef.current;
+
+    if (!video) {
+      return;
+    }
+
+    setPreviewVideoRequested(true);
+    setPreviewVideoFailed(false);
+    if (!silent) {
+      setPreviewVideoPhase("preloading");
+    }
+    delete video.dataset.fallbackApplied;
+    video.preload = "auto";
+    video.src = selectedPhoto.videoUrl;
+    video.poster = selectedPhoto.previewUrl || selectedPhoto.displayUrl;
+    video.load();
+  }, [selectedPhoto?.displayUrl, selectedPhoto?.previewUrl, selectedPhoto?.videoUrl]);
+
+  const playPreviewVideo = useCallback((video: HTMLVideoElement | null) => {
+    if (!video) {
+      return;
+    }
+
+    setPreviewVideoPlayRequested(true);
+    setPreviewVideoPhase((current) => (current === "playing" ? current : "preloading"));
+    const playResult = video.play();
+
+    if (typeof playResult?.catch === "function") {
+      playResult.catch((error) => {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+
+        setPreviewVideoPlayRequested(false);
+        setPreviewVideoPhase("error");
+        setPreviewVideoFailed(true);
+      });
+    }
+  }, []);
+
+  const markPreviewVideoStarted = useCallback(() => {
+    setPreviewThumbLoaded(true);
+    setPreviewVideoPhase("playing");
+    setPreviewVideoFailed(false);
+  }, []);
+
+  const resumePreviewVideoPlayback = useCallback(
+    (video: HTMLVideoElement | null) => {
+      if (!video || !previewVideoPlayRequested || previewVideoPhase === "playing" || previewVideoFailed) {
+        return;
+      }
+
+      if (video.paused) {
+        playPreviewVideo(video);
+      }
+    },
+    [playPreviewVideo, previewVideoFailed, previewVideoPhase, previewVideoPlayRequested],
+  );
+
+  const syncPreviewVideoPlaybackStarted = useCallback((video: HTMLVideoElement | null) => {
+    if (!video) {
+      return;
+    }
+
+    try {
+      const hasAdvancedPlayback =
+        video.currentTime > 0 ||
+        (video.played.length > 0 && video.played.end(video.played.length - 1) > 0);
+
+      if (hasAdvancedPlayback) {
+        markPreviewVideoStarted();
+      }
+    } catch {
+      if (video.currentTime > 0) {
+        markPreviewVideoStarted();
+      }
+    }
+  }, [markPreviewVideoStarted]);
+
+  const requestPreviewVideo = useCallback(() => {
+    if (!selectedPhoto?.videoUrl) {
+      return;
+    }
+
+    const video = previewVideoRef.current;
+
+    if (!video) {
+      return;
+    }
+
+    const shouldReloadPreviewVideo = previewVideoFailed || !video.currentSrc;
+
+    if (!shouldReloadPreviewVideo) {
+      playPreviewVideo(video);
+      return;
+    }
+
+    preloadPreviewVideo();
+    playPreviewVideo(video);
+  }, [playPreviewVideo, preloadPreviewVideo, previewVideoFailed, selectedPhoto?.videoUrl]);
+
+  const fetchPhotoPage = useCallback(
+    async (cursor: string | null = null, loadedCount = 0) => {
+      if (stateRef.current.isLoading) {
+        return;
+      }
+
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+
+      abortControllerRef.current = new AbortController();
+      const timeout = window.setTimeout(() => {
+        abortControllerRef.current?.abort();
+      }, CLIENT_TIMEOUT_MS);
+
+      setIsLoading(true);
+      stateRef.current.isLoading = true;
+      setError(null);
+
+      try {
+        const params = new URLSearchParams({
+          shareUrl: `${GOOGLE_PHOTOS_SHARE_URL_BASE}${encodeURIComponent(shareId)}`,
+          loadedCount: String(loadedCount),
+        });
+
+        if (cursor) {
+          params.set("cursor", cursor);
+        }
+
+        const response = await fetch(`/api/google-photos?${params.toString()}`, {
+          signal: abortControllerRef.current.signal,
+        });
+
+        if (!isMountedRef.current) {
+          return;
+        }
+
+        if (!response.ok) {
+          const data = await response.json().catch(() => null);
+          throw new Error(data?.message || data?.error || "相册数据加载失败");
+        }
+
+        const data = (await response.json()) as AlbumResponse;
+
+        if (!isMountedRef.current) {
+          return;
+        }
+
+        setAlbum(data.album);
+        setPhotos((prev) => {
+          const merged = cursor ? [...prev, ...data.photos] : data.photos;
+          stateRef.current.photosLength = merged.length;
+          return merged;
+        });
+        setNextCursor(data.nextCursor);
+        stateRef.current.nextCursor = data.nextCursor;
+        setHasMoreContent(Boolean(data.nextCursor));
+        stateRef.current.hasMoreContent = Boolean(data.nextCursor);
+      } catch (fetchError) {
+        if (!isMountedRef.current) {
+          return;
+        }
+
+        if (fetchError instanceof Error && fetchError.name === "AbortError") {
+          setError("相册请求超时，当前网络可能无法访问 Google Photos。");
+          return;
+        }
+
+        setError(fetchError instanceof Error ? fetchError.message : "相册数据加载失败");
+      } finally {
+        window.clearTimeout(timeout);
+        if (isMountedRef.current) {
+          setIsLoading(false);
+          stateRef.current.isLoading = false;
+        }
+      }
+    },
+    [shareId],
+  );
+
+  const loadMore = useCallback(() => {
+    if (stateRef.current.isLoading) {
+      return;
+    }
+
+    if (stateRef.current.visibleCount < stateRef.current.photosLength) {
+      setVisibleCount((current) => {
+        const next = Math.min(current + REVEAL_BATCH_SIZE, stateRef.current.photosLength);
+        stateRef.current.visibleCount = next;
+        return next;
+      });
+      return;
+    }
+
+    if (stateRef.current.hasMoreContent && stateRef.current.nextCursor) {
+      fetchPhotoPage(stateRef.current.nextCursor, stateRef.current.photosLength);
+    }
+  }, [fetchPhotoPage]);
+
+  const openPreview = useCallback((index: number) => {
+    setSelectedIndex(index);
+  }, []);
+
+  const closePreview = useCallback(() => {
+    stopPreviewMediaRequests();
+    setSelectedIndex(null);
+  }, [stopPreviewMediaRequests]);
+
+  const showPrev = useCallback(() => {
+    stopPreviewMediaRequests();
+
+    setSelectedIndex((current) => {
+      if (current === null || current <= 0) {
+        return current;
+      }
+      return current - 1;
+    });
+  }, [stopPreviewMediaRequests]);
+
+  const showNext = useCallback(() => {
+    stopPreviewMediaRequests();
+
+    setSelectedIndex((current) => {
+      if (current === null || current >= orderedPhotos.length - 1) {
+        return current;
+      }
+      return current + 1;
+    });
+  }, [orderedPhotos.length, stopPreviewMediaRequests]);
+
+  useEffect(() => {
+    stateRef.current.visibleCount = visibleCount;
+  }, [visibleCount]);
+
+  useEffect(() => {
+    stateRef.current.photosLength = photos.length;
+  }, [photos.length]);
+
+  useEffect(() => {
+    stateRef.current.nextCursor = nextCursor;
+  }, [nextCursor]);
+
+  useEffect(() => {
+    stateRef.current.hasMoreContent = hasMoreContent;
+  }, [hasMoreContent]);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    imageFailureIdsRef.current.clear();
+    setAlbum(null);
+    setPhotos([]);
+    setVisibleCount(REVEAL_BATCH_SIZE);
+    setNextCursor(null);
+    setHasMoreContent(true);
+    setError(null);
+    setSelectedIndex(null);
+    setImageFailureCount(0);
+    setLoadedMediaIds({});
+
+    stateRef.current = {
+      isLoading: false,
+      hasMoreContent: true,
+      visibleCount: REVEAL_BATCH_SIZE,
+      photosLength: 0,
+      nextCursor: null,
+    };
+
+    fetchPhotoPage(null, 0);
+
+    return () => {
+      isMountedRef.current = false;
+      if (observerRef.current) {
+        observerRef.current.disconnect();
+        observerRef.current = null;
+      }
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, [shareId, fetchPhotoPage]);
+
+  useEffect(() => {
+    if (!scrollDetectorRef.current) {
+      return;
+    }
+
+    if (observerRef.current) {
+      observerRef.current.disconnect();
+    }
+
+    observerRef.current = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting && !error) {
+          loadMore();
+        }
+      },
+      {
+        root: null,
+        rootMargin: "1000px",
+        threshold: 0.1,
+      },
+    );
+
+    observerRef.current.observe(scrollDetectorRef.current);
+
+    return () => {
+      observerRef.current?.disconnect();
+    };
+  }, [error, loadMore]);
+
+  useEffect(() => {
+    if (isLoading || error || !scrollDetectorRef.current) {
+      return;
+    }
+
+    const rafId = window.requestAnimationFrame(() => {
+      const rect = scrollDetectorRef.current?.getBoundingClientRect();
+      if (rect && rect.top <= window.innerHeight + 1000) {
+        loadMore();
+      }
+    });
+
+    return () => window.cancelAnimationFrame(rafId);
+  }, [photos.length, visibleCount, isLoading, error, loadMore]);
+
+  useEffect(() => {
+    if (!isPreviewOpen) {
+      return;
+    }
+
+    scrollLockStateRef.current = {
+      scrollX: window.scrollX,
+      scrollY: window.scrollY,
+    };
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closePreview();
+      } else if (event.key === "ArrowLeft") {
+        showPrev();
+      } else if (event.key === "ArrowRight") {
+        showNext();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+
+    return () => {
+      const lockState = scrollLockStateRef.current;
+
+      if (lockState) {
+        window.scrollTo(lockState.scrollX, lockState.scrollY);
+        window.requestAnimationFrame(() => {
+          window.scrollTo(lockState.scrollX, lockState.scrollY);
+        });
+        scrollLockStateRef.current = null;
+      }
+
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [isPreviewOpen, closePreview, showNext, showPrev]);
+
+  useEffect(() => {
+    setPreviewThumbLoaded(false);
+    setPreviewFullLoaded(false);
+    setPreviewVideoPhase("idle");
+    setPreviewVideoRequested(false);
+    setPreviewVideoPlayRequested(false);
+    setPreviewVideoAspectRatio(null);
+    setPreviewVideoFailed(false);
+  }, [selectedPhoto?.id]);
+
+  useEffect(() => {
+    if (selectedPhoto?.mediaType !== "video" || !selectedPhoto.videoUrl) {
+      return;
+    }
+
+    preloadPreviewVideo({ silent: true });
+  }, [preloadPreviewVideo, selectedPhoto?.id, selectedPhoto?.mediaType, selectedPhoto?.videoUrl]);
+
+  const registerImageFailure = (photoId: string) => {
+    if (imageFailureIdsRef.current.has(photoId)) {
+      return;
+    }
+
+    imageFailureIdsRef.current.add(photoId);
+    setImageFailureCount((current) => current + 1);
+  };
+
+  const markMediaLoaded = (photoId: string) => {
+    setLoadedMediaIds((current) => {
+      if (current[photoId]) {
+        return current;
+      }
+
+      return {
+        ...current,
+        [photoId]: true,
+      };
+    });
+  };
+
+  const fallbackMediaSource = (
+    event: React.SyntheticEvent<HTMLImageElement | HTMLVideoElement>,
+    fallbackUrl?: string | null,
+    onMissingFallback?: () => void,
+  ) => {
+    const element = event.currentTarget;
+
+    if (!fallbackUrl || element.dataset.fallbackApplied === "true") {
+      onMissingFallback?.();
+      return;
+    }
+
+    element.dataset.fallbackApplied = "true";
+    element.src = fallbackUrl;
+
+    if (element instanceof HTMLVideoElement) {
+      element.load();
+    }
+  };
+
+  return (
+    <section className={`w-full ${className}`}>
+      <div className="mb-8 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        {showTitle ? (
+          <div>
+            <h1 className="text-3xl font-bold">{title || album?.title || "相册"}</h1>
+            <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
+              已显示 {visiblePhotos.length} 张
+              {photos.length > visiblePhotos.length ? `，已缓存 ${photos.length} 张` : ""}
+            </p>
+          </div>
+        ) : (
+          <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
+            已显示 {visiblePhotos.length} 张
+            {photos.length > visiblePhotos.length ? `，已缓存 ${photos.length} 张` : ""}
+          </p>
+        )}
+      </div>
+
+      {networkHint && !error ? (
+        <div className="mb-6 rounded-xl bg-amber-50 p-4 text-sm text-amber-700 dark:bg-amber-900/30 dark:text-amber-200">
+          {networkHint}
+        </div>
+      ) : null}
+
+      {error && photos.length === 0 ? (
+        <div className="rounded-2xl border border-red-100 bg-red-50/80 p-6 text-center text-red-700 shadow-sm dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200">
+          <p className="font-semibold">相册加载失败</p>
+          <p className="mt-2 text-sm">{error}</p>
+          <button
+            type="button"
+            onClick={() => fetchPhotoPage(null, 0)}
+            className="mt-5 inline-flex items-center justify-center rounded-full border border-red-200 bg-white px-5 py-2 text-sm font-semibold text-red-700 shadow-[0_10px_24px_rgba(220,38,38,0.08)] transition hover:bg-red-50 dark:border-red-800 dark:bg-red-950/40 dark:text-red-100 dark:hover:bg-red-900/40"
+          >
+            重试
+          </button>
+        </div>
+      ) : null}
+
+      {hasLoadedEmptyAlbum ? (
+        <div className="rounded-2xl border border-amber-100 bg-amber-50/80 p-6 text-center text-amber-800 shadow-sm dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100">
+          <p className="font-semibold">相册里暂时没有可显示的照片</p>
+          <p className="mt-2 text-sm">
+            Google Photos 返回了空结果，可能是分享链接权限、相册内容或本地网络访问导致的。
+          </p>
+          <button
+            type="button"
+            onClick={() => fetchPhotoPage(null, 0)}
+            className="mt-5 inline-flex items-center justify-center rounded-full border border-amber-200 bg-white px-5 py-2 text-sm font-semibold text-amber-800 shadow-[0_10px_24px_rgba(180,83,9,0.08)] transition hover:bg-amber-50 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100 dark:hover:bg-amber-900/40"
+          >
+            重试
+          </button>
+        </div>
+      ) : null}
+
+      <Masonry
+        breakpointCols={breakpointColumns}
+        className="-ml-4 flex w-auto"
+        columnClassName="pl-4 bg-clip-padding"
+      >
+        {visiblePhotos.map((photo, photoOffset) => {
+          const photoOrder = photoOffset + 1;
+
+          return (
+          <button
+            key={photo.id}
+            type="button"
+            onClick={() => openPreview(photoOffset)}
+            className="group mb-4 block w-full overflow-hidden rounded-xl bg-white text-left shadow-md transition hover:-translate-y-1 hover:shadow-xl dark:bg-gray-800"
+          >
+            <div
+              className="relative overflow-hidden"
+              style={{
+                aspectRatio:
+                  photo.width && photo.height ? `${photo.width} / ${photo.height}` : "3 / 4",
+              }}
+            >
+              {!loadedMediaIds[photo.id] ? (
+                <div className="absolute inset-0 bg-gray-200 dark:bg-gray-700" />
+              ) : null}
+
+              <img
+                src={photo.thumbUrl}
+                alt={album?.title ? `${album.title} ${photoOrder}` : `相册照片 ${photoOrder}`}
+                width={photo.width || undefined}
+                height={photo.height || undefined}
+                loading="lazy"
+                onLoad={() => markMediaLoaded(photo.id)}
+                onError={(event) =>
+                  fallbackMediaSource(event, photo.fallbackThumbUrl, () => registerImageFailure(photo.id))
+                }
+                className={`absolute inset-0 h-full w-full object-contain transition-opacity duration-300 ${
+                  loadedMediaIds[photo.id] ? "opacity-100" : "opacity-0"
+                }`}
+              />
+
+              {photo.mediaType === "video" ? (
+                <>
+                  <div className="absolute inset-0 bg-black/15 transition group-hover:bg-black/25" />
+                  <div className="absolute left-3 top-3 rounded-full bg-black/65 px-2 py-1 text-xs font-medium text-white">
+                    视频
+                  </div>
+                  <div className="absolute bottom-3 right-3 rounded-full bg-black/65 px-2 py-1 text-xs font-medium text-white">
+                    {formatDuration(photo.durationMs) || "视频"}
+                  </div>
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="rounded-full bg-black/65 p-4 text-white shadow-lg">
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        viewBox="0 0 24 24"
+                        fill="currentColor"
+                        className="h-8 w-8"
+                      >
+                        <path d="M8 5.14v13.72a1 1 0 0 0 1.5.86l11-6.86a1 1 0 0 0 0-1.72l-11-6.86A1 1 0 0 0 8 5.14Z" />
+                      </svg>
+                    </div>
+                  </div>
+                </>
+              ) : null}
+            </div>
+          </button>
+          );
+        })}
+      </Masonry>
+
+      <div ref={scrollDetectorRef} className="h-4 w-full" aria-hidden="true" />
+
+      {isLoading ? (
+        <div className="py-8 text-center text-gray-600 dark:text-gray-400">
+          <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-current border-r-transparent align-[-0.125em]" />
+          <p className="mt-2">
+            {photos.length > 0 ? "正在继续从 Google Photos 拉取照片..." : "正在从 Google Photos 拉取相册..."}
+          </p>
+        </div>
+      ) : null}
+
+      {error && photos.length > 0 ? (
+        <div className="py-6 text-center text-sm text-red-600 dark:text-red-300">
+          {error}
+        </div>
+      ) : null}
+
+      {!hasMoreContent && visiblePhotos.length >= photos.length && photos.length > 0 ? (
+        <div className="py-8 text-center text-gray-600 dark:text-gray-400">
+          已加载全部照片
+        </div>
+      ) : null}
+
+      {selectedPhoto ? (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-4"
+          onClick={closePreview}
+          style={{
+            overscrollBehavior: "contain",
+            touchAction: selectedPhoto?.mediaType === "video" ? "auto" : "none",
+          }}
+        >
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              closePreview();
+            }}
+            className={`absolute right-4 top-4 sm:right-6 sm:top-6 ${previewIconButtonClassName}`}
+            aria-label="关闭预览"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.35"
+              strokeLinecap="round"
+              className="h-5 w-5"
+              aria-hidden="true"
+            >
+              <path d="M6 6 18 18" />
+              <path d="M18 6 6 18" />
+            </svg>
+          </button>
+
+          {selectedIndex !== null && selectedIndex > 0 ? (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                showPrev();
+              }}
+              className={`absolute left-3 top-1/2 -translate-y-1/2 sm:left-5 lg:left-8 ${previewIconButtonClassName}`}
+              aria-label="上一张"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.35"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="h-5 w-5"
+                aria-hidden="true"
+              >
+                <path d="m15 18-6-6 6-6" />
+              </svg>
+            </button>
+          ) : null}
+
+          {selectedIndex !== null && selectedIndex < orderedPhotos.length - 1 ? (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                showNext();
+              }}
+              className={`absolute right-3 top-1/2 -translate-y-1/2 sm:right-5 lg:right-8 ${previewIconButtonClassName}`}
+              aria-label="下一张"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.35"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="h-5 w-5"
+                aria-hidden="true"
+              >
+                <path d="m9 6 6 6-6 6" />
+              </svg>
+            </button>
+          ) : null}
+
+          <div
+            className="relative flex max-h-full w-full max-w-6xl flex-col items-center gap-4"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div
+              className="max-h-[80vh] max-w-full overflow-hidden rounded-2xl shadow-2xl"
+              style={{
+                width: previewFrameWidth,
+              }}
+            >
+              {selectedPhoto.mediaType === "video" && selectedPhoto.videoUrl ? (
+                <div
+                  className="relative mx-auto overflow-hidden rounded-2xl bg-black"
+                  style={{
+                    aspectRatio: resolvedPreviewVideoAspectRatio ? String(resolvedPreviewVideoAspectRatio) : "16 / 9",
+                    width: "100%",
+                    maxWidth: "100%",
+                    maxHeight: "80vh",
+                  }}
+                >
+                  <div
+                    className={`absolute inset-0 bg-gray-200 transition-opacity duration-300 dark:bg-gray-700 ${
+                      previewThumbLoaded ? "pointer-events-none opacity-0" : "opacity-100"
+                    }`}
+                  />
+
+                  <img
+                    ref={previewPosterImageRef}
+                    key={`${selectedPhoto.id}-poster`}
+                    src={selectedPhoto.previewUrl || selectedPhoto.displayUrl}
+                    alt={
+                      album?.title && selectedPhotoOrder !== null
+                        ? `${album.title} ${selectedPhotoOrder}`
+                        : `相册缩略图 ${selectedPhotoOrder ?? ""}`.trim()
+                    }
+                    onLoad={() => setPreviewThumbLoaded(true)}
+                    onError={(event) =>
+                      fallbackMediaSource(
+                        event,
+                        selectedPhoto.fallbackPreviewUrl || selectedPhoto.fallbackDisplayUrl,
+                        () => setPreviewThumbLoaded(true),
+                      )
+                    }
+                    className={`absolute inset-0 h-full w-full object-contain transition-opacity duration-300 ${
+                      previewVideoPlayRequested && previewVideoPhase !== "error"
+                        ? "pointer-events-none opacity-0"
+                        : "opacity-100"
+                    }`}
+                  />
+
+                  {isPreviewVideoOverlayVisible ? (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black/35 px-4 text-white">
+                      {isPreviewVideoPlayButtonVisible ? (
+                        <button
+                          type="button"
+                          onClick={requestPreviewVideo}
+                          className="flex h-16 w-16 items-center justify-center rounded-full border border-white/10 bg-black/72 text-white shadow-[0_18px_38px_rgba(0,0,0,0.28)] transition hover:bg-black/82"
+                          aria-label={
+                            previewVideoFailed ? "重新加载视频" : "加载并播放视频"
+                          }
+                        >
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            viewBox="0 0 24 24"
+                            fill="currentColor"
+                            className="h-6 w-6 translate-x-[1px]"
+                            aria-hidden="true"
+                          >
+                            <path d="M8 5.14v13.72a1 1 0 0 0 1.5.86l11-6.86a1 1 0 0 0 0-1.72l-11-6.86A1 1 0 0 0 8 5.14Z" />
+                          </svg>
+                        </button>
+                      ) : null}
+
+                      <div className="text-center">
+                        <div className="flex items-center justify-center gap-2 text-sm font-medium text-white/80">
+                          <span>{previewVideoStatusText}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <video
+                    ref={previewVideoRef}
+                    key={selectedPhoto.id}
+                    src={previewVideoRequested ? selectedPhoto.videoUrl : undefined}
+                    poster={selectedPhoto.previewUrl || selectedPhoto.displayUrl}
+                    controls={previewVideoPlayRequested && previewVideoPhase !== "error"}
+                    playsInline
+                    preload={previewVideoRequested ? "auto" : "metadata"}
+                    onCanPlay={(event) => {
+                      setPreviewThumbLoaded(true);
+                      setPreviewVideoFailed(false);
+                      setPreviewVideoPhase(previewVideoPlayRequested ? "ready" : "idle");
+                      syncPreviewVideoAspectRatio(event.currentTarget);
+                      resumePreviewVideoPlayback(event.currentTarget);
+                    }}
+                    onLoadedMetadata={(event) => {
+                      setPreviewThumbLoaded(true);
+                      syncPreviewVideoAspectRatio(event.currentTarget);
+                    }}
+                    onLoadedData={(event) => {
+                      setPreviewThumbLoaded(true);
+                      setPreviewVideoFailed(false);
+                      syncPreviewVideoAspectRatio(event.currentTarget);
+                      if (previewVideoPlayRequested) {
+                        setPreviewVideoPhase("ready");
+                      }
+                      resumePreviewVideoPlayback(event.currentTarget);
+                    }}
+                    onPlaying={() => {
+                      markPreviewVideoStarted();
+                    }}
+                    onPlay={(event) => {
+                      syncPreviewVideoPlaybackStarted(event.currentTarget);
+                    }}
+                    onTimeUpdate={(event) => {
+                      syncPreviewVideoPlaybackStarted(event.currentTarget);
+                    }}
+                    onWaiting={() => {
+                      if (!previewVideoFailed) {
+                        setPreviewVideoPhase("buffering");
+                      }
+                    }}
+                    onStalled={() => {
+                      if (!previewVideoFailed && previewVideoPlayRequested) {
+                        setPreviewVideoPhase("buffering");
+                      }
+                    }}
+                    onSuspend={() => {
+                      if (!previewVideoFailed && previewVideoPlayRequested && previewVideoPhase !== "playing") {
+                        setPreviewVideoPhase("preloading");
+                      }
+                    }}
+                    onPause={(event) => {
+                      if (event.currentTarget.ended) {
+                        return;
+                      }
+
+                      if (
+                        !previewVideoFailed &&
+                        event.currentTarget.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA &&
+                        previewVideoPlayRequested
+                      ) {
+                        setPreviewVideoPhase("paused");
+                      }
+                    }}
+                    onSeeked={(event) => {
+                      if (!previewVideoFailed) {
+                        setPreviewVideoPhase(
+                          event.currentTarget.paused && !previewVideoPlayRequested ? "idle" : "playing",
+                        );
+                      }
+                    }}
+                    onSeeking={() => {
+                      if (!previewVideoFailed) {
+                        setPreviewVideoPhase("buffering");
+                      }
+                    }}
+                    onError={(event) => {
+                      fallbackMediaSource(event, selectedPhoto.fallbackVideoUrl, () => {
+                        setPreviewThumbLoaded(true);
+                        setPreviewVideoPlayRequested(false);
+                        setPreviewVideoPhase("error");
+                        setPreviewVideoFailed(true);
+                      });
+                    }}
+                    className={`absolute inset-0 h-full w-full object-contain transition-opacity duration-300 ${
+                      previewVideoPlayRequested && previewVideoPhase !== "error"
+                        ? "opacity-100"
+                        : "pointer-events-none opacity-0"
+                    }`}
+                  />
+                </div>
+              ) : (
+                <div
+                  className="relative mx-auto overflow-hidden rounded-2xl"
+                  style={{
+                    aspectRatio:
+                      selectedPhoto.width && selectedPhoto.height
+                        ? `${selectedPhoto.width} / ${selectedPhoto.height}`
+                        : "3 / 4",
+                    width: "100%",
+                    maxWidth: "100%",
+                    maxHeight: "80vh",
+                  }}
+                >
+                  <div
+                    className={`absolute inset-0 bg-gray-200 transition-opacity duration-300 dark:bg-gray-700 ${
+                      previewThumbLoaded || previewFullLoaded ? "pointer-events-none opacity-0" : "opacity-100"
+                    }`}
+                  />
+
+                  {previewImageUrl ? (
+                    <img
+                      ref={previewImageElementRef}
+                      key={`${selectedPhoto.id}-${previewImageUrl}`}
+                      src={previewImageUrl}
+                      alt={
+                        album?.title && selectedPhotoOrder !== null
+                          ? `${album.title} ${selectedPhotoOrder}`
+                          : `相册缩略图 ${selectedPhotoOrder ?? ""}`.trim()
+                      }
+                      onLoad={() => {
+                        setPreviewThumbLoaded(true);
+
+                        if (previewImageUrl === previewFullImageUrl) {
+                          setPreviewFullLoaded(true);
+                        }
+                      }}
+                      onError={(event) =>
+                        fallbackMediaSource(
+                          event,
+                          previewImageUrl === selectedPhoto.previewUrl
+                            ? selectedPhoto.fallbackPreviewUrl
+                            : selectedPhoto.fallbackDisplayUrl,
+                          () => setPreviewThumbLoaded(true),
+                        )
+                      }
+                      className="absolute inset-0 h-full w-full object-contain"
+                    />
+                  ) : null}
+
+                  {shouldLoadFullPreviewImage && previewFullImageUrl ? (
+                    <img
+                      ref={previewFullImageElementRef}
+                      key={`${selectedPhoto.id}-${previewFullImageUrl}`}
+                      src={previewFullImageUrl}
+                      alt={
+                        album?.title && selectedPhotoOrder !== null
+                          ? `${album.title} ${selectedPhotoOrder}`
+                          : `相册照片 ${selectedPhotoOrder ?? ""}`.trim()
+                      }
+                      onLoad={() => setPreviewFullLoaded(true)}
+                      onError={(event) =>
+                        fallbackMediaSource(event, selectedPhoto.fallbackOriginalLikeUrl, () =>
+                          setPreviewFullLoaded(true),
+                        )
+                      }
+                      className={`absolute inset-0 h-full w-full object-contain transition-opacity duration-300 ${
+                        previewFullLoaded ? "opacity-100" : "opacity-0"
+                      }`}
+                    />
+                  ) : null}
+                </div>
+              )}
+            </div>
+
+            <div className="flex w-full max-w-4xl items-center justify-between gap-4 rounded-2xl bg-black/60 px-4 py-3 text-white">
+              <div>
+                <p className="text-sm font-medium">
+                  {selectedPhoto.mediaType === "video" ? "视频" : "图片"} #{selectedPhotoOrder}
+                </p>
+                <p className="text-xs text-white/70">
+                  {selectedPhoto.takenAt
+                    ? new Date(selectedPhoto.takenAt).toLocaleString()
+                    : "未知拍摄时间"}
+                </p>
+              </div>
+
+              <a
+                href={selectedPhoto.videoUrl || selectedPhoto.originalLikeUrl || selectedPhoto.displayUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center justify-center rounded-full border border-white/10 bg-black/38 px-4 py-2 text-sm font-medium text-white/82 backdrop-blur-xl transition hover:bg-black/54 hover:text-white"
+              >
+                新窗口打开
+              </a>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+};
+
+export default PhotoAlbumMasonry;

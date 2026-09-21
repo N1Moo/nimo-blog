@@ -1,0 +1,33 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+
+const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
+const astroConfigSource = readFileSync("astro.config.mjs", "utf8");
+const localDevPluginSource = readFileSync("src/plugins/local-dev-api-integration.js", "utf8");
+
+test("astro dev registers a local API bridge for shared server handlers", async () => {
+  const { DEV_API_ROUTE_MODULES } = await import("../src/plugins/local-dev-api-integration.js");
+
+  assert.deepEqual(DEV_API_ROUTE_MODULES, {
+    "/api/douban": "/src/server/api/douban.ts",
+    "/api/weread": "/src/server/api/weread.ts",
+    "/api/git-projects": "/src/server/api/git-projects.ts",
+    "/api/google-photos": "/src/server/api/google-photos.ts",
+  });
+
+  assert.match(astroConfigSource, /localDevApiIntegration/);
+  assert.match(astroConfigSource, /localDevApiIntegration\(\)/);
+  assert.match(packageJson.scripts.dev, /\bastro dev --host 127\.0\.0\.1 --port 4321\b/);
+  assert.match(localDevPluginSource, /"astro:config:setup": \(\{ updateConfig \}\) => \{/);
+  assert.match(localDevPluginSource, /configureServer\(server\)/);
+  assert.match(localDevPluginSource, /server\.middlewares\.use\(async \(req, res, next\) => \{/);
+});
+
+test("local dev api bridge loads route modules on demand instead of racing watcher reloads", () => {
+  assert.equal(localDevPluginSource.includes('server.watcher.on("change"'), false);
+  assert.equal(localDevPluginSource.includes("let preloadPromise = null;"), false);
+  assert.match(localDevPluginSource, /const routeModule = await server\.ssrLoadModule\(routeModulePath\);/);
+  assert.equal(localDevPluginSource.includes("await preloadPromise;"), false);
+  assert.equal(localDevPluginSource.includes("routeModules.get(pathname)"), false);
+});

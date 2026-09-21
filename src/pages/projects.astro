@@ -1,0 +1,23 @@
+---
+import Layout from "@/components/layout/Layout.astro";
+import GitProjects from "@/components/GitProjects";
+import { GitPlatform } from "@/lib/git-projects-shared";
+
+export const prerender = true;
+---
+
+<Layout
+  title="项目"
+  description="我的开源项目展示"
+  pageType="directory"
+  skipSrTitle={false}
+>
+  <!-- 示例：将 username 改成自己的代码托管账号；platform 可改为 GitPlatform.GITEE 或 GitPlatform.GITEA。 -->
+  <GitProjects
+    platform={GitPlatform.GITHUB}
+    username="lsy2246"
+    title="个人项目"
+    showTitle={false}
+    client:idle
+  />
+</Layout>

@@ -1,0 +1,11 @@
+packages:
+  - .
+
+allowBuilds:
+  '@tailwindcss/oxide': false
+  esbuild: true
+  puppeteer: false
+  sharp: true
+  swup: false
+  vue-demi: false
+  workerd: true

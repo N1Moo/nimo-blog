@@ -1,0 +1,310 @@
+---
+import "@/styles/global.css";
+import Header from "@/components/layout/Header.astro";
+import Footer from "@/components/layout/Footer.astro";
+import { SITE_META } from "@/consts";
+import * as siteConfig from "@/consts";
+import { createCanonicalUrl, normalizeCanonicalPath } from "@/lib/canonical-url.js";
+import { getPlatformObservability } from "@/platform/runtime/observability.js";
+import VercelSpeedInsights from "@/components/VercelSpeedInsights.astro";
+
+// 定义Props接口
+interface Props {
+  title?: string;
+  description?: string;
+  date?: Date;
+  updatedDate?: Date;
+  tags?: string[];
+  keywords?: string[];
+  robots?: string;
+  jsonLd?: Record<string, unknown> | Record<string, unknown>[];
+  skipSrTitle?: boolean; // 控制是否跳过屏幕阅读器标题
+  pageType?: "page" | "article" | "directory"; // 更有语义的页面类型
+  rssLink?: string; // 文章的RSS链接
+  contentLayout?: "default" | "custom"; // default 使用统一页面容器，custom 交给页面或组件自己控制宽度和间距
+  hideFooter?: boolean;
+  hideHeader?: boolean;
+  headerMode?: "default" | "overlay";
+}
+
+// 从props中获取页面特定信息
+const {
+  title = SITE_META.title,
+  description,
+  date,
+  updatedDate,
+  tags,
+  keywords,
+  robots = "index, follow",
+  jsonLd,
+  skipSrTitle = true,
+  pageType = "page", // 默认为普通页面
+  rssLink,
+  contentLayout = "default",
+  hideFooter = false,
+  hideHeader = false,
+  headerMode = "default",
+} = Astro.props;
+
+const hasCustomContentLayout = contentLayout === "custom";
+const useOverlayHeader = headerMode === "overlay";
+const pageDescription = description || SITE_META.description || title;
+const canonicalPath = normalizeCanonicalPath(Astro.url.pathname);
+const canonicalHref = createCanonicalUrl(canonicalPath, Astro.site);
+const ogType = pageType === "article" ? "article" : "website";
+const pageKeywords = Array.from(new Set([...(keywords ?? []), ...(tags ?? [])]))
+  .map((keyword) => keyword.trim())
+  .filter(Boolean);
+const siteJsonLd = {
+  "@context": "https://schema.org",
+  "@type": "WebSite",
+  name: SITE_META.title,
+  url: SITE_META.url,
+};
+const personJsonLd = {
+  "@context": "https://schema.org",
+  "@type": "Person",
+  name: SITE_META.author,
+  url: SITE_META.url,
+};
+const pageJsonLdItems = Array.isArray(jsonLd) ? jsonLd : jsonLd ? [jsonLd] : [];
+const DEFAULT_FEATURE_FLAGS = {
+  seo: true,
+  rss: true,
+};
+type OptionalSiteConfig = typeof siteConfig & {
+  FEATURE_FLAGS?: Partial<typeof DEFAULT_FEATURE_FLAGS>;
+};
+const optionalSiteConfig = siteConfig as OptionalSiteConfig;
+const siteFeatureFlags = {
+  ...DEFAULT_FEATURE_FLAGS,
+  ...(optionalSiteConfig.FEATURE_FLAGS ?? {}),
+};
+const jsonLdItems = siteFeatureFlags.seo ? [siteJsonLd, personJsonLd, ...pageJsonLdItems] : [];
+const observability = getPlatformObservability();
+const showVercelInsights = observability.speedInsights && !import.meta.env.DEV;
+const bodyScripts = observability.bodyScripts.map((script) => ({
+  ...script,
+  async: "async" in script ? Boolean(script.async) : undefined,
+}));
+---
+
+<!doctype html>
+<html
+  lang="zh-CN"
+  class="m-0 w-full h-full"
+>
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width"
+    />
+    <meta
+      name="referrer"
+      content="no-referrer"
+    />
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href="/favicon.svg"
+    />
+    <meta
+      name="generator"
+      content="Echoes"
+    />
+    <meta 
+      name="application-name" 
+      content="Echoes"
+    >
+    {
+      import.meta.env.DEV && (
+        <script type="module" is:inline>
+          if (!window.__vite_plugin_react_preamble_installed__) {
+            import("/@react-refresh").then(({ injectIntoGlobalHook }) => {
+              injectIntoGlobalHook(window);
+              window.$RefreshReg$ = () => {};
+              window.$RefreshSig$ = () => (type) => type;
+              window.__vite_plugin_react_preamble_installed__ = true;
+            });
+          }
+        </script>
+      )
+    }
+    <script is:inline>
+      const storedTheme = localStorage.getItem("theme");
+      const systemTheme = window.matchMedia("(prefers-color-scheme: dark)").matches
+        ? "dark"
+        : "light";
+      document.documentElement.dataset.theme = storedTheme ?? systemTheme;
+    </script>
+
+    {
+      siteFeatureFlags.rss && (
+        <link
+          rel="alternate"
+          type="application/rss+xml"
+          title={`${SITE_META.title} - RSS订阅`}
+          href="/rss.xml"
+        />
+      )
+    }
+    {
+      siteFeatureFlags.rss && rssLink && (
+        <link
+          rel="alternate"
+          type="application/rss+xml"
+          title={`${title} - RSS订阅`}
+          href={rssLink}
+        />
+      )
+    }
+
+    <title>{title}</title>
+    {
+      siteFeatureFlags.seo && (
+        <meta
+          name="description"
+          content={pageDescription}
+        />
+      )
+    }
+    {
+      siteFeatureFlags.seo && pageKeywords.length > 0 && (
+        <meta
+          name="keywords"
+          content={pageKeywords.join(", ")}
+        />
+      )
+    }
+    {
+      siteFeatureFlags.seo && (
+        <>
+          <meta
+            name="robots"
+            content={robots}
+          />
+          <link
+            rel="canonical"
+            href={canonicalHref}
+          />
+          <meta
+            property="og:type"
+            content={ogType}
+          />
+          <meta
+            property="og:url"
+            content={canonicalHref}
+          />
+          <meta
+            property="og:title"
+            content={title}
+          />
+          <meta
+            property="og:description"
+            content={pageDescription}
+          />
+          <meta
+            name="twitter:card"
+            content="summary_large_image"
+          />
+          <meta
+            name="twitter:site"
+            content={SITE_META.title}
+          />
+          <meta
+            name="twitter:creator"
+            content={SITE_META.author}
+          />
+        </>
+      )
+    }
+    {
+      siteFeatureFlags.seo && date && pageType === "article" && (
+        <meta
+          property="article:published_time"
+          content={date.toISOString()}
+        />
+      )
+    }
+    {
+      jsonLdItems.map((item) => (
+        <script
+          type="application/ld+json"
+          set:html={JSON.stringify(item)}
+        />
+      ))
+    }
+    {
+      siteFeatureFlags.seo && updatedDate && pageType === "article" && (
+        <meta
+          property="article:modified_time"
+          content={updatedDate.toISOString()}
+        />
+      )
+    }
+    {
+      siteFeatureFlags.seo &&
+        pageType === "article" &&
+        tags?.map((tag) => (
+          <meta
+            property="article:tag"
+            content={tag}
+          />
+        ))
+    }
+
+    <script>
+      import "../swup.js";
+    </script>
+    <script>
+      import "../theme-toggle/runtime.ts";
+    </script>
+  </head>
+  <body
+    class:list={[
+        "m-0 w-full h-full bg-page-base flex flex-col min-h-screen",
+        {
+        "site-monochrome-page": !useOverlayHeader,
+        "layout-article-page": pageType === "article",
+        "layout-directory-page": pageType === "directory",
+        "layout-overlay-header": useOverlayHeader,
+        "layout-content-custom": hasCustomContentLayout,
+        "layout-no-header": hideHeader,
+      },
+    ]}
+  >
+    <Header hidden={hideHeader} />
+    <main
+      data-layout-page-type={pageType}
+      data-layout-content-layout={contentLayout}
+      data-layout-header-mode={headerMode}
+      data-layout-hide-footer={hideFooter ? "true" : "false"}
+      data-layout-hide-header={hideHeader ? "true" : "false"}
+      class:list={[
+        "grow w-full",
+        hasCustomContentLayout
+            ? [
+                hideHeader || useOverlayHeader ? "pt-0" : "pt-16",
+                "max-w-none px-0 py-0 layout-main-fullbleed",
+              ]
+            : "pt-16 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6",
+      ]}
+    >
+      {!skipSrTitle && <h1 class="sr-only">{title}</h1>}
+      <slot />
+    </main>
+    <Footer isHidden={hideFooter} />
+    {
+      bodyScripts.map((script) => (
+        <script
+          src={script.src}
+          async={script.async}
+          defer={script.defer}
+          {...script.dataAttributes}
+        />
+      ))
+    }
+    {showVercelInsights && <VercelSpeedInsights />}
+  </body>
+</html>
