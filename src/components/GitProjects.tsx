@@ -403,12 +403,7 @@ const GitProjects: FC<GitProjectsProps> = ({
                   key={project.url}
                   className="git-project-card"
                 >
-                  <a
-                    href={project.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="git-project-card-link"
-                  >
+                  <div className="git-project-card-link">
                     <div className="git-project-card-header">
                       <div className="git-project-platform-icon">
                         {getPlatformIcon(project.platform as GitPlatform)}
@@ -531,7 +526,7 @@ const GitProjects: FC<GitProjectsProps> = ({
                         </div>
                       </div>
                     </div>
-                  </a>
+                  </div>
                 </div>
               );
             })}

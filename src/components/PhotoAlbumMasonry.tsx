@@ -1134,14 +1134,6 @@ const PhotoAlbumMasonry: React.FC<PhotoAlbumMasonryProps> = ({
                 </p>
               </div>
 
-              <a
-                href={selectedPhoto.videoUrl || selectedPhoto.originalLikeUrl || selectedPhoto.displayUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center justify-center rounded-full border border-white/10 bg-black/38 px-4 py-2 text-sm font-medium text-white/82 backdrop-blur-xl transition hover:bg-black/54 hover:text-white"
-              >
-                新窗口打开
-              </a>
             </div>
           </div>
         </div>

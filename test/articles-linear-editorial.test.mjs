@@ -198,7 +198,7 @@ test("article detail keeps tags once and renders related articles as a linear li
   assert.ok(articleHistoryView.includes("article-history-list"));
   assert.ok(articleHistoryView.includes("article-history-version"));
   assert.ok(articleHistoryView.includes("article-history-hash"));
-  assert.ok(articleHistoryView.includes("article-history-snapshot"));
+  assert.equal(articleHistoryView.includes("article-history-snapshot"), false);
   assert.ok(articleDetail.includes("articleIdentity"));
   assert.ok(articleDetail.includes("related-list"));
   assert.ok(articleDetail.includes("related-item"));
@@ -216,7 +216,7 @@ test("article detail keeps tags once and renders related articles as a linear li
   assert.equal(relatedSection.includes("article-card"), false);
 });
 
-test("article history keeps the snapshot link under the hash", () => {
+test("article history keeps external snapshots out of the page", () => {
   const historyItem =
     articleHistoryView.match(/<li class:list=\{\["article-history-item"[\s\S]*?<\/li>/)?.[0] ??
     "";
@@ -231,11 +231,9 @@ test("article history keeps the snapshot link under the hash", () => {
 
   assert.notEqual(versionBlock, "");
   assert.ok(versionBlock.includes("article-history-hash"));
-  assert.ok(versionBlock.includes("article-history-snapshot"));
-  assert.ok(versionBlock.includes("历史快照"));
+  assert.equal(versionBlock.includes("article-history-snapshot"), false);
+  assert.equal(versionBlock.includes("历史快照"), false);
   assert.equal(versionBlock.includes("文件快照"), false);
-  assert.match(cssBlock(articlesCss, ".article-history-hash,\n.article-history-snapshot"), /text-decoration-line:\s*underline;/);
-  assert.match(cssBlock(articlesCss, ".article-history-hash,\n.article-history-snapshot"), /text-decoration-color:\s*color-mix\(in oklab,\s*var\(--article-line-strong\) 72%,\s*var\(--article-line\)\);/);
 });
 
 test("article history heading is localized and related reading has no extra top rule", () => {
@@ -683,12 +681,11 @@ test("timeline page exists and avoids heavy archive explanation blocks", () => {
   assert.ok(timelineView.includes("revision-commit-head"));
   assert.ok(timelineView.includes("revision-article-list"));
   assert.ok(timelineView.includes("revision-article-item"));
-  assert.ok(timelineView.includes("commit.commitUrl"));
-  assert.ok(timelineView.includes("event.snapshotUrl"));
+  assert.equal(timelineView.includes('target="_blank"'), false);
   assert.ok(timelineView.includes("data-timeline-view"));
   assert.ok(timelineView.includes("发布时间轴"));
   assert.ok(timelineView.includes("修订记录"));
-  assert.ok(timelineView.includes("历史快照"));
+  assert.equal(timelineView.includes("历史快照"), false);
   assert.equal(timelineView.includes(">文件<"), false);
   assert.ok(timelineView.includes("year-index"));
   assert.ok(timelineView.includes("timeline-year-strip"));

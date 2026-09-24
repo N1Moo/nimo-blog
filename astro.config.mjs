@@ -4,7 +4,6 @@ import { defineConfig } from "astro/config";
 import tailwindcss from "@tailwindcss/vite";
 import mdx from "@astrojs/mdx";
 import react from "@astrojs/react";
-import rehypeExternalLinks from "rehype-external-links";
 import { SITE_META } from "./src/consts";
 import * as siteConfig from "./src/consts";
 import { articleIndexerIntegration } from "./src/plugins/article-index/integration.js";
@@ -120,7 +119,6 @@ export default defineConfig({
       wrap: true,
     },
     rehypePlugins: [
-      [rehypeExternalLinks, { target: "_blank", rel: ["nofollow", "noopener", "noreferrer"] }],
       rehypeMermaid,
       rehypeCodeBlocks,
       rehypeTables,

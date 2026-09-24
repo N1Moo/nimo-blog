@@ -282,18 +282,7 @@ function getRevisionLabel(kind: string) {
                           {formatRevisionTime(commit.date)}
                         </time>
                         {
-                          commit.commitUrl ? (
-                            <a
-                              class="revision-hash"
-                              href={commit.commitUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              {commit.shortHash}
-                            </a>
-                          ) : (
-                            <span class="revision-hash">{commit.shortHash}</span>
-                          )
+                          <span class="revision-hash">{commit.shortHash}</span>
                         }
                         <span class:list={["revision-commit-kind", `is-${commit.kind}`]}>
                           {getRevisionLabel(commit.kind)}
@@ -321,17 +310,6 @@ function getRevisionLabel(kind: string) {
                             }
                           </a>
                           <span class="revision-article-actions">
-                            {
-                              event.snapshotUrl && (
-                                <a
-                                  href={event.snapshotUrl}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                >
-                                  历史快照
-                                </a>
-                              )
-                            }
                           </span>
                         </li>
                       ))}

@@ -151,7 +151,7 @@ const WereadBookList: React.FC<WereadBookListProps> = ({ listId }) => {
           {books.length > 0 ? (
             books.map((book) => (
               <div
-                key={book.link}
+                key={`${book.title}-${book.imageUrl}`}
                 className="cover-card"
               >
                 <div className="cover-card-poster">
@@ -174,14 +174,9 @@ const WereadBookList: React.FC<WereadBookListProps> = ({ listId }) => {
                   <div className="cover-card-overlay">
                     <div className="cover-card-textStack">
                       <h3 className="cover-card-titleBadge">
-                        <a
-                          href={book.link}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="cover-card-titleLink"
-                        >
+                        <span className="cover-card-titleLink">
                           {book.title}
-                        </a>
+                        </span>
                       </h3>
                       <p className="cover-card-meta">
                         {book.author}

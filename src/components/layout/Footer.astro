@@ -40,9 +40,7 @@ const siteFeatureFlags = {
     <div
       class="site-footer__links text-sm font-light flex flex-wrap items-center justify-center gap-2"
     >
-      <a href="https://github.com/lsy2246/newechoes">
-        © {currentYear} Echoes · Lsy
-      </a>
+      <span>© {currentYear} NIMO</span>
       {
         siteFeatureFlags.sitemap && (
           <>
@@ -54,8 +52,6 @@ const siteFeatureFlags = {
             </span>
             <a
               href="/sitemap.xml"
-              target="_blank"
-              rel="noopener noreferrer"
               aria-label="网站地图"
             >
               Sitemap
@@ -74,8 +70,6 @@ const siteFeatureFlags = {
             </span>
             <a
               href="/rss.xml"
-              target="_blank"
-              rel="noopener noreferrer"
               aria-label="RSS订阅"
             >
               RSS

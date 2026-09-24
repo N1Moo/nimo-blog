@@ -43,30 +43,7 @@ function getRevisionLabel(kind: string) {
         <span class="article-history-rail" aria-hidden="true"></span>
         <span class="article-history-version">
           {
-            event.commitUrl ? (
-              <a
-                class="article-history-hash"
-                href={event.commitUrl}
-                target="_blank"
-                rel="noreferrer"
-              >
-                {event.shortHash}
-              </a>
-            ) : (
-              <span class="article-history-hash">{event.shortHash}</span>
-            )
-          }
-          {
-            event.snapshotUrl && (
-              <a
-                class="article-history-snapshot"
-                href={event.snapshotUrl}
-                target="_blank"
-                rel="noreferrer"
-              >
-                历史快照
-              </a>
-            )
+            <span class="article-history-hash">{event.shortHash}</span>
           }
         </span>
         <span class="article-history-copy">

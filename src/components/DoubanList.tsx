@@ -440,7 +440,7 @@ const DoubanList: React.FC<DoubanListProps> = ({
         ) : items.length > 0 ? (
           items.map((item) => (
             <div
-              key={item.link}
+              key={`${item.title}-${item.imageUrl}`}
               className="cover-card"
             >
               <div className="cover-card-poster">
@@ -459,14 +459,9 @@ const DoubanList: React.FC<DoubanListProps> = ({
                 <div className="cover-card-overlay">
                   <div className="cover-card-textStack">
                     <h3 className="cover-card-titleBadge">
-                      <a
-                        href={item.link}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="cover-card-titleLink"
-                      >
+                      <span className="cover-card-titleLink">
                         {item.title}
-                      </a>
+                      </span>
                     </h3>
                   </div>
                 </div>
