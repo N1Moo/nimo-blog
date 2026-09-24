@@ -81,6 +81,12 @@ function parseFrontmatterArray(frontmatter, key) {
 async function scanContentArticles(contentDir = path.join(process.cwd(), "src", "content")) {
   const articles = [];
 
+  try {
+    await fs.access(contentDir);
+  } catch {
+    return articles;
+  }
+
   async function visit(currentDir) {
     const entries = await fs.readdir(currentDir, { withFileTypes: true });
 
