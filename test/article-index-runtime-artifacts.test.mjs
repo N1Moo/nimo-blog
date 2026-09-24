@@ -180,3 +180,28 @@ test("generateArticleIndex throws when content directory is missing", async () =
     /内容目录不存在/u,
   );
 });
+
+test("generateArticleIndex writes empty indexes when no articles are published", async () => {
+  const tempRoot = mkdtempSync(path.join(os.tmpdir(), "article-index-empty-"));
+  const contentRoot = path.join(tempRoot, "src", "content");
+  const buildRoot = path.join(tempRoot, "dist");
+  const outputRoot = path.join(buildRoot, "assets", "index");
+
+  try {
+    mkdirSync(contentRoot, { recursive: true });
+    const { generateArticleIndex } = await import("../src/plugins/article-index/integration.js");
+    const result = await generateArticleIndex({
+      buildDir: buildRoot,
+      contentDir: contentRoot,
+      outputDir: outputRoot,
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(result.articleCount, 0);
+    assert.deepEqual(JSON.parse(readFileSync(path.join(outputRoot, "search_index.json"), "utf8")).articles, []);
+    assert.deepEqual(JSON.parse(readFileSync(path.join(outputRoot, "filter_index.json"), "utf8")).articles, []);
+    assert.deepEqual(JSON.parse(readFileSync(path.join(outputRoot, "global_graph.json"), "utf8")).articles, []);
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});

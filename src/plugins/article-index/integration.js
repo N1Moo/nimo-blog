@@ -218,12 +218,6 @@ export async function generateArticleIndex(options = {}) {
     contentDirPath,
     options.repositoryConfig,
   );
-  if (indexes.articleCount === 0) {
-    const error = new Error("没有找到有效文章");
-    console.error("生成文章索引时出错:", error.message);
-    throw error;
-  }
-
   const written = writeArticleIndexes(outputDirPath, indexes);
   const mirroredDirs = syncIndexArtifactsToPlatformOutputs(buildDirPath, outputDirPath);
 
