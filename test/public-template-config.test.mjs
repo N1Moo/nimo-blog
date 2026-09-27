@@ -33,14 +33,14 @@ test("public template keeps only required config in consts and documents optiona
 test("collection pages keep demo ids at component call sites with Chinese notes", () => {
   assert.equal(constsSource.includes("export const COLLECTION_PROFILE"), false);
   assert.equal(constsExampleSource.includes("COLLECTION_PROFILE"), false);
-  assert.ok(albumsPage.includes("将 shareId 改成自己的 Google Photos 分享 ID"));
+  assert.ok(albumsPage.includes("填入自己的 Google Photos 分享 ID"));
   assert.ok(booksPage.includes("将 listId 改成自己的微信读书书单 ID"));
   assert.ok(moviesPage.includes("将 doubanId 改成自己的豆瓣 ID"));
-  assert.ok(projectsPage.includes("将 username 改成自己的代码托管账号"));
-  assert.ok(albumsPage.includes('shareId="M62Uxp4Uz2CUwie9A"'));
+  assert.ok(projectsPage.includes("填入自己的代码托管账号"));
+  assert.ok(albumsPage.includes('shareId=""'));
   assert.ok(booksPage.includes('listId="333895983_80fTRWHwy"'));
   assert.ok(moviesPage.includes('doubanId="lsy22"'));
-  assert.ok(projectsPage.includes('username="lsy2246"'));
+  assert.ok(projectsPage.includes('username=""'));
   assert.equal(existsSync("src/components/views/AlbumsView.astro"), false);
   assert.equal(existsSync("src/components/views/BooksView.astro"), false);
   assert.equal(existsSync("src/components/views/MoviesView.astro"), false);

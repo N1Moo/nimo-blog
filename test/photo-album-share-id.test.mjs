@@ -6,9 +6,10 @@ const albumsPage = readFileSync("src/pages/albums.astro", "utf8");
 const component = readFileSync("src/components/PhotoAlbumMasonry.tsx", "utf8");
 const consts = readFileSync("src/consts.ts", "utf8");
 
-test("albums page keeps the Google Photos share id at the component call site", () => {
-  assert.ok(albumsPage.includes('shareId="M62Uxp4Uz2CUwie9A"'));
-  assert.ok(albumsPage.includes("将 shareId 改成自己的 Google Photos 分享 ID"));
+test("albums page does not ship another person's Google Photos share id", () => {
+  assert.ok(albumsPage.includes('shareId=""'));
+  assert.ok(albumsPage.includes("填入自己的 Google Photos 分享 ID"));
+  assert.equal(albumsPage.includes("M62Uxp4Uz2CUwie9A"), false);
   assert.equal(albumsPage.includes("PHOTO_ALBUM_CONFIG"), false);
   assert.equal(albumsPage.includes("COLLECTION_PROFILE"), false);
   assert.equal(albumsPage.includes("shareUrl="), false);

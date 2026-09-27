@@ -481,11 +481,19 @@ const PhotoAlbumMasonry: React.FC<PhotoAlbumMasonryProps> = ({
 
     stateRef.current = {
       isLoading: false,
-      hasMoreContent: true,
+      hasMoreContent: Boolean(shareId.trim()),
       visibleCount: REVEAL_BATCH_SIZE,
       photosLength: 0,
       nextCursor: null,
     };
+
+    if (!shareId.trim()) {
+      setIsLoading(false);
+      setHasMoreContent(false);
+      return () => {
+        isMountedRef.current = false;
+      };
+    }
 
     fetchPhotoPage(null, 0);
 

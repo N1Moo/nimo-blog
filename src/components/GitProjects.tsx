@@ -185,6 +185,15 @@ const GitProjects: FC<GitProjectsProps> = ({
     // 设置组件已挂载标志
     isMountedRef.current = true;
 
+    if (!username && !organization && !url) {
+      setLoading(false);
+      setProjects([]);
+      setError(null);
+      return () => {
+        isMountedRef.current = false;
+      };
+    }
+
     fetchData(1);
 
     // 清理函数
